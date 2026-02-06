@@ -1,0 +1,72 @@
+# mautrix-max — Matrix-Max Messenger bridge configuration
+
+# Homeserver details
+homeserver:
+    address: https://matrix.example.com
+    domain: example.com
+    verify_ssl: true
+
+# Application service host/registration details
+appservice:
+    address: http://localhost:29320
+    hostname: 0.0.0.0
+    port: 29320
+    database: postgres://mautrix_max:changeme@localhost/mautrix_max
+    id: max
+    bot_username: maxbot
+    bot_displayname: Max Bridge Bot
+    bot_avatar: mxc://maunium.net/placeholder
+    as_token: "generate"
+    hs_token: "generate"
+
+# Max connection settings
+max:
+    connection_mode: bot       # bot | user
+    bot_token: ""              # Bot API token (for bot mode)
+    api_url: https://platform-api.max.ru
+    ws_url: wss://ws-api.oneme.ru/websocket
+    polling_timeout: 90
+
+# Bridge-specific settings
+bridge:
+    username_template: "max_{userid}"
+    displayname_template: "{displayname} (Max)"
+    command_prefix: "!max"
+    permissions:
+        "*": "relay"
+        "example.com": "user"
+        "@admin:example.com": "admin"
+    relay:
+        enabled: false
+    provisioning:
+        enabled: true
+        prefix: /_matrix/provision
+        shared_secret: "generate"
+
+# MergeChat license (required)
+mergechat:
+    license_key: ""           # MergeChat license key
+    server_id: ""             # Server ID in MergeChat
+    api_url: https://mergechat.ru/api
+
+# Python logging configuration
+logging:
+    version: 1
+    formatters:
+        colored:
+            (): mautrix.util.logging.color.ColorFormatter
+            format: "[%(asctime)s] [%(levelname)s@%(name)s] %(message)s"
+    handlers:
+        console:
+            class: logging.StreamHandler
+            formatter: colored
+    loggers:
+        mau:
+            level: DEBUG
+        mautrix_max:
+            level: DEBUG
+        aiohttp:
+            level: INFO
+    root:
+        level: DEBUG
+        handlers: [console]

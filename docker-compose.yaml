@@ -1,0 +1,34 @@
+version: "3.8"
+
+services:
+  mautrix-max:
+    build: .
+    image: ghcr.io/avkosorotov/mautrix-max:latest
+    container_name: mautrix-max
+    restart: unless-stopped
+    volumes:
+      - ./data:/data
+    depends_on:
+      - db
+    networks:
+      - matrix
+
+  db:
+    image: postgres:17-alpine
+    container_name: mautrix-max-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: mautrix_max
+      POSTGRES_PASSWORD: changeme
+      POSTGRES_DB: mautrix_max
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - matrix
+
+volumes:
+  pgdata:
+
+networks:
+  matrix:
+    external: true

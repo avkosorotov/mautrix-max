@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "mautrix-max"
+version = "0.1.0"
+description = "A Matrix-Max Messenger puppeting bridge based on mautrix-python"
+readme = "README.md"
+license = {text = "AGPL-3.0-or-later"}
+authors = [{name = "MergeChat", email = "support@mergechat.ru"}]
+requires-python = ">=3.10"
+dependencies = [
+    "mautrix>=0.20",
+    "asyncpg>=0.28",
+    "aiohttp>=3.9",
+    "pydantic>=2.5",
+    "msgpack>=1.0",
+    "lz4>=4.3",
+    "python-olm>=3.2",
+    "pillow>=10.0",
+]
+
+[project.scripts]
+mautrix-max = "mautrix_max.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["mautrix_max*"]
