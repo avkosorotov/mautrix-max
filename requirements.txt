@@ -6,3 +6,6 @@ msgpack>=1.0
 lz4>=4.3
 python-olm>=3.2
 pillow>=10.0
+ruamel.yaml>=0.18
+commonmark>=0.9
+python-magic>=0.4

@@ -23,8 +23,11 @@ from .web.provisioning import ProvisioningAPI
 class MaxBridge(Bridge):
     name = "mautrix-max"
     module = "mautrix_max"
+    command = "python -m mautrix_max"
+    description = "A Matrix-Max Messenger puppeting bridge."
+    repo_url = "https://github.com/avkosorotov/mautrix-max"
+    version = __version__
     command_prefix = "!max"
-    bridge_version = __version__
     config_class = Config
     matrix_class = MatrixHandler
     upgrade_table = upgrade_table
@@ -39,7 +42,6 @@ class MaxBridge(Bridge):
         DBPuppet.db = self.db
         DBUser.db = self.db
         DBMessage.db = self.db
-        self.loop.run_until_complete(self._verify_license())
 
     async def _check_license(self) -> tuple[bool, str]:
         """Check MergeChat license. Returns (valid, error_message)."""
@@ -127,6 +129,7 @@ class MaxBridge(Bridge):
                 sys.exit(1)
 
     async def start(self) -> None:
+        await self._verify_license()
         User.init_cls(self)
         Puppet.init_cls(self)
         Portal.init_cls(self)
@@ -147,11 +150,20 @@ class MaxBridge(Bridge):
     async def get_portal(self, room_id: RoomID) -> Portal | None:
         return await Portal.get_by_mxid(room_id)
 
-    async def get_puppet(self, user_id: UserID) -> Puppet | None:
+    async def get_puppet(self, user_id: UserID, create: bool = False) -> Puppet | None:
         return await Puppet.get_by_mxid(user_id)
 
     async def get_double_puppet(self, user_id: UserID) -> Puppet | None:
         return None  # Double puppeting not yet implemented
+
+    async def count_logged_in_users(self) -> int:
+        users = await User.all_logged_in()
+        return len(users)
+
+    def is_bridge_ghost(self, user_id: UserID) -> bool:
+        prefix = self.config.username_template.split('{userid}')[0]
+        localpart = str(user_id).split(':')[0][1:]  # Remove @ and domain
+        return localpart.startswith(prefix)
 
 
 def main() -> None:
