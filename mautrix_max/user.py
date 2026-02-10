@@ -133,8 +133,9 @@ class User:
         from .max.types import ChatType, MaxChat, MaxUser
         from .portal import Portal
 
-        self.log.info("Syncing %d chats from login response", len(raw_chats))
+        self.log.info("Syncing %d chats from login response (max_user_id=%s)", len(raw_chats), self.max_user_id)
         created = 0
+        logged_first_dm = False
         for c in raw_chats:
             try:
                 # Login response uses "id" for chat ID (not "chatId")
@@ -149,6 +150,9 @@ class User:
                 # For DMs ("dialog"), find the dialog partner from participants
                 dwu = None
                 participants = c.get("participants", [])
+                if chat_type == ChatType.DIALOG and not logged_first_dm:
+                    self.log.debug("First DM chat %s: participants=%s", chat_id, participants[:3] if participants else "empty")
+                    logged_first_dm = True
                 if chat_type == ChatType.DIALOG and participants and self.max_user_id:
                     for p in participants:
                         if isinstance(p, dict):
