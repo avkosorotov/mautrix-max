@@ -169,7 +169,7 @@ class ProvisioningAPI:
                 "type": "display_and_wait",
                 "display_and_wait": {
                     "type": "qr",
-                    "data": qr_data.get("qr_url", qr_data.get("code", "")),
+                    "data": qr_data.get("qrLink", ""),
                     "timeout": 120,
                 },
             })
@@ -273,10 +273,12 @@ class ProvisioningAPI:
             if not user:
                 return web.json_response({"error": "User not found"}, status=404)
 
-            user_data = resp.get("user", {})
+            # Token is in tokenAttrs.LOGIN.token, user_id in profile.contact.id
+            profile = resp.get("profile", {})
+            contact = profile.get("contact", {})
             await user.login_user(
                 auth_token=client.auth_token,
-                user_id=user_data.get("user_id", 0),
+                user_id=contact.get("id", 0),
             )
 
             del self._login_sessions[login_id]
@@ -302,10 +304,11 @@ class ProvisioningAPI:
                 from ..user import User
                 user = await User.get_by_mxid(user_id)
                 if user:
-                    user_data = resp.get("user", {})
+                    profile = resp.get("profile", {})
+                    contact = profile.get("contact", {})
                     await user.login_user(
                         auth_token=client.auth_token,
-                        user_id=user_data.get("user_id", 0),
+                        user_id=contact.get("id", 0),
                     )
 
                 del self._login_sessions[login_id]
@@ -334,10 +337,10 @@ class ProvisioningAPI:
             client = UserMaxClient(ws_url=self.bridge.config["max.ws_url"])
 
             qr_data = await client.start_qr_auth()
-            qr_code = qr_data.get("qr_url", qr_data.get("code", ""))
+            qr_link = qr_data.get("qrLink", "")
 
             await ws.send_json({
-                "code": qr_code,
+                "code": qr_link,
                 "timeout": 120,
             })
 
@@ -348,10 +351,11 @@ class ProvisioningAPI:
                     from ..user import User
                     user = await User.get_by_mxid(mxid)
                     if user:
-                        user_data = resp.get("user", {})
+                        profile = resp.get("profile", {})
+                        contact = profile.get("contact", {})
                         await user.login_user(
                             auth_token=client.auth_token,
-                            user_id=user_data.get("user_id", 0),
+                            user_id=contact.get("id", 0),
                         )
                     await ws.send_json({"success": True})
                 else:
