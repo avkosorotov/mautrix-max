@@ -29,26 +29,26 @@ class MatrixHandler(BaseMatrixHandler):
         super().__init__(bridge=bridge)
         self.bridge = bridge
 
-    async def handle_message(self, room_id: RoomID, user_id: str, message: MessageEvent) -> None:
+    async def handle_message(self, evt: MessageEvent, was_encrypted: bool = False) -> None:
         """Handle an incoming Matrix message."""
         from .portal import Portal
         from .user import User
 
-        portal = await Portal.get_by_mxid(room_id)
+        portal = await Portal.get_by_mxid(evt.room_id)
         if not portal:
             return
 
-        sender = await User.get_by_mxid(user_id)
+        sender = await User.get_by_mxid(evt.sender)
         if not sender or not sender.is_logged_in:
             return
 
-        content = message.content
+        content = evt.content
         if not isinstance(content, TextMessageEventContent):
             # For now, only handle text messages
             # TODO: handle media messages
             return
 
-        await portal.handle_matrix_message(sender, message.event_id, content)
+        await portal.handle_matrix_message(sender, evt.event_id, content)
 
     async def handle_redaction(self, room_id: RoomID, user_id: str, event_id: EventID, redaction: RedactionEvent) -> None:
         """Handle a Matrix message redaction (deletion)."""

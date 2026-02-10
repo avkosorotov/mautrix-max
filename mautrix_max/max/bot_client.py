@@ -145,6 +145,7 @@ class BotMaxClient(BaseMaxClient):
 
     async def _handle_raw_update(self, raw: dict[str, Any]) -> None:
         """Parse a raw update and dispatch as MaxEvent."""
+        self.log.debug("Raw update: %s", raw)
         update_type_str = raw.get("update_type", "")
         try:
             event_type = EventType(update_type_str)
@@ -173,12 +174,19 @@ class BotMaxClient(BaseMaxClient):
                     type=raw_link.get("type", "reply"),
                     mid=raw_link.get("mid", ""),
                 )
+            # mid can be at top level OR inside body (Max Bot API inconsistency)
+            raw_body = raw_message.get("body") or {}
+            mid = (
+                raw_message.get("mid")
+                or (raw_body.get("mid") if isinstance(raw_body, dict) else None)
+                or str(raw_message.get("message_id", ""))
+            )
             message = MaxMessage(
-                mid=raw_message.get("mid", str(raw_message.get("message_id", ""))),
+                mid=mid,
                 timestamp=raw_message.get("timestamp", 0),
                 sender=sender,
                 recipient=raw_message.get("recipient"),
-                body=raw_message.get("body"),
+                body=raw_body if isinstance(raw_body, dict) else raw_message.get("body"),
                 link=link,
                 stat=raw_message.get("stat"),
             )

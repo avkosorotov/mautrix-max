@@ -169,14 +169,15 @@ class Portal:
 
         event_id = await intent.send_message(self.mxid, content)
 
-        # Save message mapping
-        from .db.message import Message as DBMessage
-        await DBMessage.insert(
-            max_chat_id=self.max_chat_id,
-            max_msg_id=message.message_id,
-            mxid=str(event_id),
-            mx_room=str(self.mxid),
-        )
+        # Save message mapping (skip if message_id is empty)
+        if message.message_id:
+            from .db.message import Message as DBMessage
+            await DBMessage.insert(
+                max_chat_id=self.max_chat_id,
+                max_msg_id=message.message_id,
+                mxid=str(event_id),
+                mx_room=str(self.mxid),
+            )
 
     async def handle_max_edit(self, message_id: str, new_text: str) -> None:
         """Handle a Max message edit."""
