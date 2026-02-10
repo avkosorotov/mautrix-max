@@ -66,7 +66,10 @@ class Portal:
     ) -> Portal:
         await cls.db.execute(
             "INSERT INTO portal (max_chat_id, mxid, name, encrypted, relay_user_id) "
-            "VALUES ($1, $2, $3, $4, $5)",
+            "VALUES ($1, $2, $3, $4, $5) "
+            "ON CONFLICT (max_chat_id) DO UPDATE SET "
+            "mxid=EXCLUDED.mxid, name=EXCLUDED.name, encrypted=EXCLUDED.encrypted, "
+            "relay_user_id=EXCLUDED.relay_user_id",
             max_chat_id, mxid, name, encrypted, relay_user_id,
         )
         return cls(max_chat_id, mxid, name, encrypted, relay_user_id)

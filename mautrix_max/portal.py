@@ -76,6 +76,7 @@ class Portal:
                 name=db_portal.name,
                 encrypted=db_portal.encrypted,
             )
+            portal._db = db_portal
             cls.by_max_chat_id[chat_id] = portal
             if portal.mxid:
                 cls.by_mxid[portal.mxid] = portal
@@ -97,6 +98,7 @@ class Portal:
                 mxid=db_portal.mxid,
                 name=db_portal.name,
             )
+            portal._db = db_portal
             cls.by_max_chat_id[db_portal.max_chat_id] = portal
             cls.by_mxid[mxid] = portal
             return portal
