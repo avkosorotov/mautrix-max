@@ -106,9 +106,7 @@ class Portal:
 
     # ── Matrix room creation ────────────────────────────────────
 
-    async def create_matrix_room(
-        self, source: User, info: MaxChat | None = None, sender: MaxUser | None = None
-    ) -> RoomID:
+    async def create_matrix_room(self, source: User, info: MaxChat | None = None) -> RoomID:
         """Create a Matrix room for this portal if it doesn't exist."""
         if self.mxid:
             return self.mxid
@@ -121,13 +119,13 @@ class Portal:
             is_direct = info.type.value == "dialog" if info else False
 
             if info:
-                if is_direct and not info.title and sender:
-                    # For DMs, use the sender's name (get_chat_members doesn't work for dialogs)
-                    self.name = sender.display_name
-                elif info.title:
-                    self.name = info.title
-                else:
-                    self.name = info.display_title
+                self.name = info.display_title
+                # For DMs, update puppet with avatar from dialog_with_user
+                if info.dialog_with_user:
+                    from .puppet import Puppet
+                    puppet = await Puppet.get_by_max_user_id(info.dialog_with_user.user_id)
+                    if puppet:
+                        await puppet.update_info(info.dialog_with_user)
 
             main_intent = self._get_main_intent()
             room_id = await main_intent.create_room(
@@ -153,7 +151,7 @@ class Portal:
                     chat_info = await source.max_client.get_chat(self.max_chat_id)
                 except Exception:
                     pass
-            await self.create_matrix_room(source, chat_info, sender=message.sender)
+            await self.create_matrix_room(source, chat_info)
 
         # Get puppet for the sender
         puppet = None

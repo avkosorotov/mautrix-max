@@ -255,15 +255,26 @@ class BotMaxClient(BaseMaxClient):
 
     async def get_chat(self, chat_id: int) -> MaxChat:
         resp = await self._request("GET", f"/chats/{chat_id}")
+        dialog_user = None
+        raw_dialog_user = resp.get("dialog_with_user")
+        if raw_dialog_user:
+            dialog_user = MaxUser(
+                user_id=raw_dialog_user.get("user_id", 0),
+                name=raw_dialog_user.get("name", ""),
+                username=raw_dialog_user.get("username"),
+                avatar_url=raw_dialog_user.get("full_avatar_url") or raw_dialog_user.get("avatar_url"),
+                is_bot=raw_dialog_user.get("is_bot", False),
+            )
         return MaxChat(
             chat_id=resp.get("chat_id", chat_id),
             type=ChatType(resp.get("type", "dialog")),
             title=resp.get("title"),
             icon=resp.get("icon"),
-            members_count=resp.get("members_count", 0),
+            members_count=resp.get("members_count", resp.get("participants_count", 0)),
             owner_id=resp.get("owner_id"),
             is_public=resp.get("is_public", False),
             description=resp.get("description"),
+            dialog_with_user=dialog_user,
         )
 
     async def get_chat_members(self, chat_id: int) -> list[MaxUser]:

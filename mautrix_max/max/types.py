@@ -162,9 +162,12 @@ class MaxChat(BaseModel):
     is_public: bool = False
     last_event_time: Optional[int] = None
     description: Optional[str] = None
+    dialog_with_user: Optional[MaxUser] = None
 
     @property
     def display_title(self) -> str:
+        if self.dialog_with_user:
+            return self.dialog_with_user.display_name
         return self.title or f"Chat {self.chat_id}"
 
 
