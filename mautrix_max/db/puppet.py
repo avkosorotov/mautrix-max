@@ -16,6 +16,7 @@ class Puppet:
     avatar_mxc: Optional[str]
     name_set: bool
     avatar_set: bool
+    is_registered: bool
 
     def __init__(
         self,
@@ -25,6 +26,7 @@ class Puppet:
         avatar_mxc: Optional[str] = None,
         name_set: bool = False,
         avatar_set: bool = False,
+        is_registered: bool = False,
     ) -> None:
         self.max_user_id = max_user_id
         self.name = name
@@ -32,6 +34,7 @@ class Puppet:
         self.avatar_mxc = avatar_mxc
         self.name_set = name_set
         self.avatar_set = avatar_set
+        self.is_registered = is_registered
 
     @classmethod
     def _from_row(cls, row) -> Puppet:
@@ -42,6 +45,7 @@ class Puppet:
             avatar_mxc=row["avatar_mxc"],
             name_set=row["name_set"],
             avatar_set=row["avatar_set"],
+            is_registered=row["is_registered"],
         )
 
     @classmethod
@@ -60,13 +64,14 @@ class Puppet:
         avatar_mxc: Optional[str] = None,
         name_set: bool = False,
         avatar_set: bool = False,
+        is_registered: bool = False,
     ) -> Puppet:
         await cls.db.execute(
-            "INSERT INTO puppet (max_user_id, name, username, avatar_mxc, name_set, avatar_set) "
-            "VALUES ($1, $2, $3, $4, $5, $6) "
+            "INSERT INTO puppet (max_user_id, name, username, avatar_mxc, name_set, avatar_set, is_registered) "
+            "VALUES ($1, $2, $3, $4, $5, $6, $7) "
             "ON CONFLICT (max_user_id) DO UPDATE SET "
             "name=EXCLUDED.name, username=EXCLUDED.username, avatar_mxc=EXCLUDED.avatar_mxc, "
-            "name_set=EXCLUDED.name_set, avatar_set=EXCLUDED.avatar_set",
-            max_user_id, name, username, avatar_mxc, name_set, avatar_set,
+            "name_set=EXCLUDED.name_set, avatar_set=EXCLUDED.avatar_set, is_registered=EXCLUDED.is_registered",
+            max_user_id, name, username, avatar_mxc, name_set, avatar_set, is_registered,
         )
-        return cls(max_user_id, name, username, avatar_mxc, name_set, avatar_set)
+        return cls(max_user_id, name, username, avatar_mxc, name_set, avatar_set, is_registered)

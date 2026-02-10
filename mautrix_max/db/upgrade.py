@@ -59,3 +59,10 @@ async def upgrade_v1(conn, scheme) -> None:
             reaction       TEXT NOT NULL
         )"""
     )
+
+
+@upgrade_table.register(description="Add is_registered to puppet")
+async def upgrade_v2(conn, scheme) -> None:
+    await conn.execute(
+        "ALTER TABLE puppet ADD COLUMN is_registered BOOLEAN NOT NULL DEFAULT false"
+    )

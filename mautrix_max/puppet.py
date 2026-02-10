@@ -27,6 +27,7 @@ class Puppet:
     avatar_mxc: Optional[str]
     name_set: bool
     avatar_set: bool
+    is_registered: bool
 
     intent: IntentAPI
 
@@ -38,6 +39,7 @@ class Puppet:
         avatar_mxc: Optional[str] = None,
         name_set: bool = False,
         avatar_set: bool = False,
+        is_registered: bool = False,
     ) -> None:
         self.max_user_id = max_user_id
         self.name = name
@@ -45,6 +47,7 @@ class Puppet:
         self.avatar_mxc = avatar_mxc
         self.name_set = name_set
         self.avatar_set = avatar_set
+        self.is_registered = is_registered
         self.log = logger.getChild(str(max_user_id))
 
     @classmethod
@@ -81,6 +84,7 @@ class Puppet:
                 avatar_mxc=db_puppet.avatar_mxc,
                 name_set=db_puppet.name_set,
                 avatar_set=db_puppet.avatar_set,
+                is_registered=db_puppet.is_registered,
             )
             puppet.intent = puppet._get_intent()
             cls.by_max_user_id[user_id] = puppet
@@ -145,4 +149,5 @@ class Puppet:
             avatar_mxc=self.avatar_mxc,
             name_set=self.name_set,
             avatar_set=self.avatar_set,
+            is_registered=self.is_registered,
         )
