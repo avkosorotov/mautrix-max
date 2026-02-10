@@ -22,10 +22,13 @@ def guess_mime_type(filename: str) -> str:
     return mime or "application/octet-stream"
 
 
-def get_max_attachment_type(mime_type: str) -> str:
-    """Map a MIME type to a Max attachment type string."""
+def get_max_attachment_type(mime_type: str, *, bot_api: bool = False) -> str:
+    """Map a MIME type to a Max attachment type string.
+
+    Bot API uses "image" instead of "photo" for image attachments.
+    """
     if mime_type in SUPPORTED_IMAGE_TYPES:
-        return "photo"
+        return "image" if bot_api else "photo"
     if mime_type in SUPPORTED_VIDEO_TYPES:
         return "video"
     if mime_type in SUPPORTED_AUDIO_TYPES:
@@ -45,12 +48,26 @@ def check_file_size(data: bytes, mime_type: str) -> Optional[str]:
     return None
 
 
+def make_attachment(token: str, mime_type: str, filename: str = "", *, bot_api: bool = False) -> dict:
+    """Create an attachment payload for sending.
+
+    Bot API uses "image" for photos; User API uses "photo".
+    """
+    att_type = get_max_attachment_type(mime_type, bot_api=bot_api)
+    if att_type in ("image", "photo"):
+        return {"type": att_type, "payload": {"token": token}}
+    if att_type == "video":
+        return {"type": "video", "payload": {"token": token}}
+    # file, audio, etc.
+    result: dict = {"type": att_type, "payload": {"token": token}}
+    if filename:
+        result["filename"] = filename
+    return result
+
+
 def make_photo_attachment(token: str) -> dict:
-    """Create a photo attachment payload for sending."""
-    return {
-        "type": "photo",
-        "payload": {"token": token},
-    }
+    """Create a photo attachment payload for sending (Bot API format)."""
+    return {"type": "image", "payload": {"token": token}}
 
 
 def make_file_attachment(token: str, filename: str) -> dict:

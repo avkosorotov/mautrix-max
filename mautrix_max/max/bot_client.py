@@ -321,7 +321,7 @@ class BotMaxClient(BaseMaxClient):
         # Step 2: upload the file
         session = await self._ensure_session()
         form = aiohttp.FormData()
-        form.add_field("file", data, filename=filename, content_type=content_type)
+        form.add_field("data", data, filename=filename, content_type=content_type)
         async with session.post(upload_url, data=form) as upload_resp:
             if upload_resp.status not in (200, 201):
                 raise MaxAPIError("upload_failed", f"HTTP {upload_resp.status}", upload_resp.status)
@@ -333,7 +333,7 @@ class BotMaxClient(BaseMaxClient):
     @staticmethod
     def _guess_upload_type(content_type: str) -> str:
         if content_type.startswith("image/"):
-            return "photo"
+            return "image"
         if content_type.startswith("video/"):
             return "video"
         if content_type.startswith("audio/"):

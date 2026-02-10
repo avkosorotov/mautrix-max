@@ -17,6 +17,7 @@ class ChatType(str, enum.Enum):
 
 class AttachmentType(str, enum.Enum):
     PHOTO = "photo"
+    IMAGE = "image"  # Bot API uses "image" instead of "photo"
     FILE = "file"
     STICKER = "sticker"
     VIDEO = "video"
@@ -24,6 +25,10 @@ class AttachmentType(str, enum.Enum):
     AUDIO = "audio"
     CONTACT = "contact"
     LOCATION = "location"
+
+    @property
+    def is_photo(self) -> bool:
+        return self in (AttachmentType.PHOTO, AttachmentType.IMAGE)
 
 
 class EventType(str, enum.Enum):
@@ -85,13 +90,14 @@ class MaxAttachment(BaseModel):
     def best_photo_url(self) -> Optional[str]:
         """Get the highest-resolution photo URL."""
         if not self.photos:
-            return None
+            # Fallback: check url field directly (some API formats)
+            return self.url
         # Prefer original > large > medium > small
         for key in ("original", "large", "medium", "small"):
             if key in self.photos:
                 return self.photos[key].url
         # Fallback to first available
-        return next(iter(self.photos.values())).url if self.photos else None
+        return next(iter(self.photos.values())).url if self.photos else self.url
 
 
 class MaxLinkedMessage(BaseModel):
@@ -131,7 +137,12 @@ class MaxMessage(BaseModel):
         for att in self.body["attachments"]:
             att_type = att.get("type", "")
             try:
-                result.append(MaxAttachment(type=att_type, **{k: v for k, v in att.items() if k != "type"}))
+                # Bot API wraps attachment data in "payload", unwrap it
+                payload = att.get("payload", {})
+                fields = {k: v for k, v in att.items() if k not in ("type", "payload")}
+                if isinstance(payload, dict):
+                    fields.update(payload)
+                result.append(MaxAttachment(type=att_type, **fields))
             except Exception:
                 continue
         return result

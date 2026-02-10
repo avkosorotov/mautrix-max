@@ -8,8 +8,10 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from mautrix.appservice import IntentAPI
 from mautrix.types import (
+    ContentURI,
     EventID,
     EventType,
+    MediaMessageEventContent,
     MessageType,
     RoomID,
     TextMessageEventContent,
@@ -17,9 +19,11 @@ from mautrix.types import (
 
 from .db.portal import Portal as DBPortal
 
+from .max.types import AttachmentType
+
 if TYPE_CHECKING:
     from .__main__ import MaxBridge
-    from .max.types import MaxChat, MaxEvent, MaxMessage, MaxUser
+    from .max.types import MaxAttachment, MaxChat, MaxEvent, MaxMessage, MaxUser
     from .puppet import Puppet
     from .user import User
 
@@ -163,24 +167,40 @@ class Portal:
 
         intent = puppet.intent if puppet else self._get_main_intent()
 
-        # Send message to Matrix
-        text = message.text or ""
-        content = TextMessageEventContent(
-            msgtype=MessageType.TEXT,
-            body=text,
-        )
-
-        # Handle reply
+        # Resolve reply for both text and attachments
+        reply_event_id = None
         if message.reply_to:
             from .db.message import Message as DBMessage
             db_msg = await DBMessage.get_by_max_msg_id(self.max_chat_id, message.reply_to)
             if db_msg and db_msg.mxid:
-                content.set_reply(EventID(db_msg.mxid))
+                reply_event_id = EventID(db_msg.mxid)
 
-        event_id = await intent.send_message(self.mxid, content)
+        event_id = None
+
+        # Handle attachments (photos, files, videos, audio)
+        attachments = message.attachments
+        if attachments:
+            for att in attachments:
+                try:
+                    event_id = await self._send_max_attachment_to_matrix(
+                        source, intent, att, reply_event_id,
+                    )
+                except Exception:
+                    self.log.exception("Failed to bridge attachment type=%s", att.type)
+
+        # Send text message (or if no attachments were processed)
+        text = message.text or ""
+        if text or not attachments:
+            content = TextMessageEventContent(
+                msgtype=MessageType.TEXT,
+                body=text,
+            )
+            if reply_event_id:
+                content.set_reply(reply_event_id)
+            event_id = await intent.send_message(self.mxid, content)
 
         # Save message mapping (skip if message_id is empty)
-        if message.message_id:
+        if message.message_id and event_id:
             from .db.message import Message as DBMessage
             await DBMessage.insert(
                 max_chat_id=self.max_chat_id,
@@ -188,6 +208,63 @@ class Portal:
                 mxid=str(event_id),
                 mx_room=str(self.mxid),
             )
+
+    async def _send_max_attachment_to_matrix(
+        self,
+        source: User,
+        intent: IntentAPI,
+        att: "MaxAttachment",
+        reply_event_id: EventID | None,
+    ) -> EventID | None:
+        """Download a Max attachment and send it to Matrix."""
+        from .max.media import guess_mime_type
+
+        # Determine download URL
+        download_url = None
+        if att.type.is_photo:
+            download_url = att.best_photo_url
+        else:
+            download_url = att.url
+
+        if not download_url:
+            self.log.debug("No URL for attachment type=%s", att.type)
+            return None
+
+        # Download from Max
+        media_data = await source.max_client.download_media(download_url)
+        if not media_data:
+            return None
+
+        # Determine MIME type and filename
+        filename = att.filename or "attachment"
+        mime_type = att.mime_type or guess_mime_type(filename)
+        if att.type.is_photo and mime_type == "application/octet-stream":
+            mime_type = "image/jpeg"
+            if not att.filename:
+                filename = "photo.jpg"
+
+        # Upload to Matrix
+        content_uri = await intent.upload_media(media_data, mime_type=mime_type, filename=filename)
+
+        # Determine Matrix message type
+        if att.type.is_photo:
+            msgtype = MessageType.IMAGE
+        elif att.type == AttachmentType.VIDEO:
+            msgtype = MessageType.VIDEO
+        elif att.type in (AttachmentType.AUDIO, AttachmentType.VOICE):
+            msgtype = MessageType.AUDIO
+        else:
+            msgtype = MessageType.FILE
+
+        content = MediaMessageEventContent(
+            msgtype=msgtype,
+            body=filename,
+            url=content_uri,
+        )
+        if reply_event_id:
+            content.set_reply(reply_event_id)
+
+        return await intent.send_message(self.mxid, content)
 
     async def handle_max_edit(self, message_id: str, new_text: str) -> None:
         """Handle a Max message edit."""
@@ -249,6 +326,67 @@ class Portal:
         )
 
         # Save message mapping (skip if message_id is empty)
+        if max_msg.message_id:
+            from .db.message import Message as DBMessage
+            await DBMessage.insert(
+                max_chat_id=self.max_chat_id,
+                max_msg_id=max_msg.message_id,
+                mxid=str(event_id),
+                mx_room=str(self.mxid),
+            )
+
+    async def handle_matrix_media(self, sender: User, event_id: EventID, content: MediaMessageEventContent) -> None:
+        """Handle a Matrix media message and relay to Max."""
+        if not sender.max_client:
+            self.log.warning("User %s has no Max client", sender.mxid)
+            return
+
+        from .max.bot_client import BotMaxClient
+        from .max.media import check_file_size, guess_mime_type, make_attachment
+
+        # Download media from Matrix
+        mxc_url = content.url
+        if not mxc_url:
+            self.log.debug("No mxc URL in media message")
+            return
+
+        intent = self._get_main_intent()
+        try:
+            media_data = await intent.download_media(mxc_url)
+        except Exception:
+            self.log.exception("Failed to download media from Matrix")
+            return
+
+        # Determine MIME type and filename
+        filename = content.body or "file"
+        mime_type = getattr(content, "info", None) and getattr(content.info, "mimetype", None)
+        if not mime_type:
+            mime_type = guess_mime_type(filename)
+
+        # Check file size limits
+        size_err = check_file_size(media_data, mime_type)
+        if size_err:
+            self.log.warning("File too large for Max: %s", size_err)
+            return
+
+        # Upload to Max
+        try:
+            token = await sender.max_client.upload_media(media_data, filename, mime_type)
+        except Exception:
+            self.log.exception("Failed to upload media to Max")
+            return
+
+        # Build attachment payload (Bot API uses "image", User API uses "photo")
+        is_bot_api = isinstance(sender.max_client, BotMaxClient)
+        attachment = make_attachment(token, mime_type, filename, bot_api=is_bot_api)
+
+        # Send message with attachment (text can be caption)
+        text = ""
+        max_msg = await sender.max_client.send_message(
+            self.max_chat_id, text, attachments=[attachment],
+        )
+
+        # Save message mapping
         if max_msg.message_id:
             from .db.message import Message as DBMessage
             await DBMessage.insert(

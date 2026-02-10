@@ -10,6 +10,7 @@ from mautrix.types import (
     Event,
     EventID,
     EventType,
+    MediaMessageEventContent,
     MessageEvent,
     MessageType,
     RedactionEvent,
@@ -47,12 +48,15 @@ class MatrixHandler(BaseMatrixHandler):
             return
 
         content = evt.content
-        if not isinstance(content, TextMessageEventContent):
-            # For now, only handle text messages
-            # TODO: handle media messages
-            return
-
-        await portal.handle_matrix_message(sender, evt.event_id, content)
+        if isinstance(content, TextMessageEventContent):
+            await portal.handle_matrix_message(sender, evt.event_id, content)
+        elif isinstance(content, MediaMessageEventContent):
+            await portal.handle_matrix_media(sender, evt.event_id, content)
+        elif hasattr(content, 'msgtype') and content.msgtype in (
+            MessageType.IMAGE, MessageType.FILE, MessageType.VIDEO, MessageType.AUDIO,
+        ):
+            # Fallback: treat as media even if not properly typed
+            await portal.handle_matrix_media(sender, evt.event_id, content)
 
     async def handle_redaction(self, room_id: RoomID, user_id: str, event_id: EventID, redaction: RedactionEvent) -> None:
         """Handle a Matrix message redaction (deletion)."""
