@@ -294,7 +294,7 @@ class UserMaxClient(BaseMaxClient):
         """
         resp = await self._send_and_wait(Opcode.LOGIN_BY_TOKEN, {
             "token": self.auth_token,
-            "chatsCount": 200,
+            "chatsCount": 100,
             "lastLogin": 0,
         })
         if not resp:
