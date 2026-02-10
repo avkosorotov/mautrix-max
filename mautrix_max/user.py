@@ -152,6 +152,12 @@ class User:
             return
 
         if event.type == EventType.MESSAGE_CREATED and event.message:
+            # Skip own messages in User API mode (they are echoed back by WS)
+            if (self.connection_mode == "user"
+                    and event.message.sender
+                    and self.max_user_id
+                    and event.message.sender.user_id == self.max_user_id):
+                return
             # Dedup: skip messages already bridged from Matrix → Max
             if event.message.message_id:
                 from .db.message import Message as DBMessage

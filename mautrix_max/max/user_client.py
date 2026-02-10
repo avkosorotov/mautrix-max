@@ -707,11 +707,13 @@ class UserMaxClient(BaseMaxClient):
         reply_to: Optional[str] = None,
         attachments: Optional[list[dict[str, Any]]] = None,
     ) -> MaxMessage:
-        data: dict[str, Any] = {"chatId": chat_id, "text": text}
+        # User API expects text inside a "message" object
+        msg: dict[str, Any] = {"text": text}
+        if attachments:
+            msg["attachments"] = attachments
+        data: dict[str, Any] = {"chatId": chat_id, "message": msg}
         if reply_to:
             data["replyTo"] = reply_to
-        if attachments:
-            data["attachments"] = attachments
         resp = await self._send_and_wait(Opcode.SEND_MESSAGE, data)
         return MaxMessage(
             mid=str(resp.get("id", resp.get("mid", ""))),
