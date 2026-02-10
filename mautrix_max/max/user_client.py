@@ -260,14 +260,17 @@ class UserMaxClient(BaseMaxClient):
         self._ws = await session.ws_connect(self.ws_url, headers=WS_HEADERS)
         self._running = True
 
-        # Step 1: Send INIT_SESSION (client sends first, no waiting for HELLO)
+        # Step 1: Start listener FIRST — _send_and_wait depends on it to receive responses
+        self._listen_task = asyncio.create_task(self._listen_loop())
+
+        # Step 2: Send INIT_SESSION (client sends first, no waiting for HELLO)
         init_resp = await self._send_and_wait(Opcode.INIT_SESSION, {
             "userAgent": self._build_user_agent(),
             "deviceId": self._device_id,
         })
         self.log.debug("Session initialized: %s", init_resp)
 
-        # Step 2: Authenticate with saved token
+        # Step 3: Authenticate with saved token
         if self.auth_token:
             await self._login_by_token()
         else:
@@ -276,8 +279,7 @@ class UserMaxClient(BaseMaxClient):
                 "Use start_phone_auth() or start_qr_auth() first."
             )
 
-        # Step 3: Start listener + keepalive
-        self._listen_task = asyncio.create_task(self._listen_loop())
+        # Step 4: Start keepalive (listener already running)
         self._keepalive_task = asyncio.create_task(self._keepalive_loop())
 
     async def _login_by_token(self) -> None:
