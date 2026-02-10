@@ -210,7 +210,11 @@ class ProvisioningAPI:
                 )
 
             del self._login_sessions[login_id]
-            return web.json_response({"type": "complete", "success": True})
+            return web.json_response({
+                "type": "complete",
+                "success": True,
+                "max_user_id": user.max_user_id,
+            })
 
         # ── Phone flow: phone input ──
         if session["flow"] == "phone" and session["step"] == "phone_input":
@@ -282,7 +286,11 @@ class ProvisioningAPI:
             )
 
             del self._login_sessions[login_id]
-            return web.json_response({"type": "complete", "success": True})
+            return web.json_response({
+                "type": "complete",
+                "success": True,
+                "max_user_id": user.max_user_id,
+            })
 
         # ── QR flow: poll for completion ──
         if session["flow"] == "qr" and session["step"] == "qr_scan":
@@ -312,7 +320,11 @@ class ProvisioningAPI:
                     )
 
                 del self._login_sessions[login_id]
-                return web.json_response({"type": "complete", "success": True})
+                return web.json_response({
+                    "type": "complete",
+                    "success": True,
+                    "max_user_id": user.max_user_id if user else None,
+                })
 
             return web.json_response({
                 "login_id": login_id,
@@ -357,7 +369,10 @@ class ProvisioningAPI:
                             auth_token=client.auth_token,
                             user_id=contact.get("id", 0),
                         )
-                    await ws.send_json({"success": True})
+                    await ws.send_json({
+                        "success": True,
+                        "max_user_id": user.max_user_id,
+                    })
                 else:
                     await ws.send_json({"success": False, "error": "auth_failed"})
             except Exception as e:

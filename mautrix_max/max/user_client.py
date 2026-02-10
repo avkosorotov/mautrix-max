@@ -732,6 +732,57 @@ class UserMaxClient(BaseMaxClient):
             "messageId": message_id,
         })
 
+    # -- Chat list -----------------------------------------------------------
+
+    async def get_chats(self, count: int = 100, offset: int = 0) -> list[dict]:
+        """Fetch a page of user's chat list (opcode 48)."""
+        resp = await self._send_and_wait(Opcode.GET_CHATS, {
+            "count": count,
+            "offset": offset,
+        })
+        self.log.debug("get_chats response keys: %s", list(resp.keys()) if resp else [])
+        return resp.get("chats", []) if resp else []
+
+    async def get_all_chats(self, page_size: int = 100) -> list[MaxChat]:
+        """Fetch ALL chats using pagination and return as MaxChat objects."""
+        all_chats: list[MaxChat] = []
+        offset = 0
+        while True:
+            raw_chats = await self.get_chats(count=page_size, offset=offset)
+            if not raw_chats:
+                break
+            for c in raw_chats:
+                chat_id = c.get("chatId", c.get("chat_id", 0))
+                if not chat_id:
+                    continue
+                chat_type_str = c.get("type", "dialog")
+                try:
+                    chat_type = ChatType(chat_type_str)
+                except ValueError:
+                    chat_type = ChatType.DIALOG
+                # Parse dialog_with_user for DMs
+                dwu = None
+                raw_dwu = c.get("dialogWithUser", c.get("dialog_with_user"))
+                if raw_dwu and isinstance(raw_dwu, dict):
+                    dwu = MaxUser(
+                        user_id=raw_dwu.get("userId", raw_dwu.get("user_id", raw_dwu.get("id", 0))),
+                        name=raw_dwu.get("name", raw_dwu.get("firstName", "")),
+                        username=raw_dwu.get("username"),
+                        avatar_url=raw_dwu.get("avatarUrl", raw_dwu.get("avatar_url")),
+                    )
+                all_chats.append(MaxChat(
+                    chat_id=chat_id,
+                    type=chat_type,
+                    title=c.get("title"),
+                    members_count=c.get("membersCount", c.get("members_count", 0)),
+                    dialog_with_user=dwu,
+                ))
+            self.log.info("Fetched %d chats (offset=%d, page=%d)", len(all_chats), offset, len(raw_chats))
+            if len(raw_chats) < page_size:
+                break
+            offset += len(raw_chats)
+        return all_chats
+
     # -- Chat info -----------------------------------------------------------
 
     async def get_chat(self, chat_id: int) -> MaxChat:

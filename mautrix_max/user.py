@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING, Optional
 
@@ -114,15 +115,35 @@ class User:
         try:
             await self.max_client.connect()
             self.log.info("Connected to Max (mode=%s)", self.connection_mode)
-            # Store bot's own user_id to filter echoed messages
+            # Store user_id from login response
             if hasattr(self.max_client, '_me') and self.max_client._me:
                 if not self.max_user_id:
                     self.max_user_id = self.max_client._me.user_id
                     await self._save()
-                    self.log.info("Stored bot user_id: %d", self.max_user_id)
+                    self.log.info("Stored user_id: %d", self.max_user_id)
+            # Sync all chats (create portals + Matrix rooms)
+            asyncio.create_task(self._sync_chats())
         except Exception:
             self.log.exception("Failed to connect to Max")
             self.max_client = None
+
+    async def _sync_chats(self) -> None:
+        """Fetch all chats from Max and create portals/rooms for each."""
+        if not self.max_client or not isinstance(self.max_client, UserMaxClient):
+            return
+        try:
+            chats = await self.max_client.get_all_chats()
+            self.log.info("Syncing %d chats from Max", len(chats))
+            from .portal import Portal
+            for chat in chats:
+                portal = await Portal.get_by_max_chat_id(chat.chat_id)
+                if portal and not portal.mxid:
+                    try:
+                        await portal.create_matrix_room(self, chat)
+                    except Exception:
+                        self.log.exception("Failed to create room for chat %d", chat.chat_id)
+        except Exception:
+            self.log.exception("Failed to sync chats")
 
     async def disconnect(self) -> None:
         """Disconnect from Max."""
@@ -152,12 +173,6 @@ class User:
             return
 
         if event.type == EventType.MESSAGE_CREATED and event.message:
-            # Skip own messages in User API mode (they are echoed back by WS)
-            if (self.connection_mode == "user"
-                    and event.message.sender
-                    and self.max_user_id
-                    and event.message.sender.user_id == self.max_user_id):
-                return
             # Dedup: skip messages already bridged from Matrix → Max
             if event.message.message_id:
                 from .db.message import Message as DBMessage
