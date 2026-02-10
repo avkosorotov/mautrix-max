@@ -113,7 +113,7 @@ class User:
         self.max_client.on_event = self._on_max_event
 
         try:
-            raw_chats = await self.max_client.connect()
+            login_data = await self.max_client.connect()
             self.log.info("Connected to Max (mode=%s)", self.connection_mode)
             # Store user_id from login response
             if hasattr(self.max_client, '_me') and self.max_client._me:
@@ -122,18 +122,41 @@ class User:
                     await self._save()
                     self.log.info("Stored user_id: %d", self.max_user_id)
             # Sync chats from login response (create portals + Matrix rooms)
+            raw_chats = login_data.get("chats", []) if isinstance(login_data, dict) else login_data
+            contacts = login_data.get("contacts", {}) if isinstance(login_data, dict) else {}
             if raw_chats:
-                asyncio.create_task(self._sync_chats(raw_chats))
+                asyncio.create_task(self._sync_chats(raw_chats, contacts))
         except Exception:
             self.log.exception("Failed to connect to Max")
             self.max_client = None
 
-    async def _sync_chats(self, raw_chats: list[dict]) -> None:
+    async def _sync_chats(self, raw_chats: list[dict], contacts: dict | list = None) -> None:
         """Create portals/rooms for chats returned by login response."""
         from .max.types import ChatType, MaxChat, MaxUser
         from .portal import Portal
 
-        self.log.info("Syncing %d chats from login response (max_user_id=%s)", len(raw_chats), self.max_user_id)
+        # Build contacts lookup: userId (int) → user data dict
+        contacts_map: dict[int, dict] = {}
+        if contacts:
+            if isinstance(contacts, dict):
+                for uid_str, cdata in contacts.items():
+                    try:
+                        uid = int(uid_str)
+                        if isinstance(cdata, dict):
+                            contacts_map[uid] = cdata
+                    except (ValueError, TypeError):
+                        pass
+            elif isinstance(contacts, list):
+                for cdata in contacts:
+                    if isinstance(cdata, dict):
+                        uid = cdata.get("userId", cdata.get("user_id", cdata.get("id", 0)))
+                        if uid:
+                            contacts_map[int(uid)] = cdata
+
+        self.log.info(
+            "Syncing %d chats from login response (max_user_id=%s, contacts=%d)",
+            len(raw_chats), self.max_user_id, len(contacts_map),
+        )
         created = 0
         logged_first_dm = False
         for c in raw_chats:
@@ -157,30 +180,40 @@ class User:
                         str(raw_participants)[:500],
                     )
                     logged_first_dm = True
-                # participants can be a dict (userId→userData) or a list
+                # participants can be a dict {userId: lastReadTs} or a list
                 if isinstance(raw_participants, dict):
-                    participant_list = list(raw_participants.values()) if all(isinstance(v, dict) for v in raw_participants.values()) else [{"userId": int(k)} for k in raw_participants.keys() if str(k).isdigit()]
+                    participant_ids = []
+                    for k in raw_participants.keys():
+                        try:
+                            participant_ids.append(int(k))
+                        except (ValueError, TypeError):
+                            pass
                 elif isinstance(raw_participants, list):
-                    participant_list = raw_participants
-                else:
-                    participant_list = []
-                if chat_type == ChatType.DIALOG and participant_list and self.max_user_id:
-                    for p in participant_list:
+                    participant_ids = []
+                    for p in raw_participants:
                         if isinstance(p, dict):
-                            p_id = p.get("userId", p.get("user_id", p.get("id", 0)))
-                            if p_id and p_id != self.max_user_id:
-                                dwu = MaxUser(
-                                    user_id=p_id,
-                                    name=p.get("name", p.get("firstName", "")),
-                                    username=p.get("username"),
-                                    avatar_url=p.get("avatarUrl", p.get("avatar_url")),
-                                )
-                                break
+                            participant_ids.append(p.get("userId", p.get("user_id", p.get("id", 0))))
+                        elif isinstance(p, int):
+                            participant_ids.append(p)
+                else:
+                    participant_ids = []
+                if chat_type == ChatType.DIALOG and participant_ids and self.max_user_id:
+                    for p_id in participant_ids:
+                        if p_id and p_id != self.max_user_id:
+                            # Look up contact info from contacts_map
+                            contact = contacts_map.get(p_id, {})
+                            dwu = MaxUser(
+                                user_id=p_id,
+                                name=contact.get("name", contact.get("firstName", "")),
+                                username=contact.get("username"),
+                                avatar_url=contact.get("avatarUrl", contact.get("avatar_url")),
+                            )
+                            break
                 chat = MaxChat(
                     chat_id=chat_id,
                     type=chat_type,
                     title=c.get("title"),
-                    members_count=len(participant_list),
+                    members_count=len(participant_ids),
                     dialog_with_user=dwu,
                 )
                 portal = await Portal.get_by_max_chat_id(chat.chat_id)

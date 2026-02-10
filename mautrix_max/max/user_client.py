@@ -257,7 +257,7 @@ class UserMaxClient(BaseMaxClient):
     async def connect(self) -> list[dict]:
         """Connect to WebSocket and authenticate with saved token.
 
-        Returns list of raw chat dicts from login response.
+        Returns dict with 'chats' and 'contacts' from login response.
         """
         session = await self._ensure_session()
         self._ws = await session.ws_connect(self.ws_url, headers=WS_HEADERS)
@@ -274,9 +274,9 @@ class UserMaxClient(BaseMaxClient):
         self.log.debug("Session initialized: %s", init_resp)
 
         # Step 3: Authenticate with saved token
-        raw_chats: list[dict] = []
+        login_data: dict = {"chats": [], "contacts": {}}
         if self.auth_token:
-            raw_chats = await self._login_by_token()
+            login_data = await self._login_by_token()
         else:
             raise AuthError(
                 "No auth_token provided. "
@@ -285,12 +285,12 @@ class UserMaxClient(BaseMaxClient):
 
         # Step 4: Start keepalive (listener already running)
         self._keepalive_task = asyncio.create_task(self._keepalive_loop())
-        return raw_chats
+        return login_data
 
-    async def _login_by_token(self) -> list[dict]:
+    async def _login_by_token(self) -> dict:
         """Authenticate using a saved auth token (opcode 19).
 
-        Returns list of raw chat dicts from login response (up to chatsCount).
+        Returns dict with 'chats' and 'contacts' from login response.
         """
         resp = await self._send_and_wait(Opcode.LOGIN_BY_TOKEN, {
             "token": self.auth_token,
@@ -321,13 +321,18 @@ class UserMaxClient(BaseMaxClient):
             )
         else:
             self.log.info("Token login succeeded (no profile in response)")
-        # Extract chats from login response
+        # Extract chats and contacts from login response
         raw_chats = resp.get("chats", resp.get("dialogs", []))
+        contacts = resp.get("contacts", {})
         if raw_chats:
-            self.log.info("Login response contains %d chats", len(raw_chats))
+            self.log.info("Login response contains %d chats, %d contacts", len(raw_chats), len(contacts) if isinstance(contacts, (dict, list)) else 0)
             if raw_chats:
                 self.log.debug("First chat keys: %s", list(raw_chats[0].keys()) if isinstance(raw_chats[0], dict) else type(raw_chats[0]))
-        return raw_chats
+        if contacts:
+            # Log contacts structure for debugging
+            sample = str(contacts)[:500] if isinstance(contacts, (dict, list)) else str(type(contacts))
+            self.log.debug("Contacts sample: %s", sample)
+        return {"chats": raw_chats, "contacts": contacts}
 
     async def _close_ws(self) -> None:
         """Close WebSocket and cancel listener (used on auth failure cleanup)."""
