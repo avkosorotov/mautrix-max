@@ -202,11 +202,20 @@ class User:
                         if p_id and p_id != self.max_user_id:
                             # Look up contact info from contacts_map
                             contact = contacts_map.get(p_id, {})
+                            # Extract name from nested "names" array
+                            c_name = ""
+                            names_list = contact.get("names", [])
+                            if names_list and isinstance(names_list, list):
+                                c_name = names_list[0].get("name", names_list[0].get("firstName", ""))
+                            if not c_name:
+                                c_name = contact.get("name", contact.get("firstName", ""))
+                            # Avatar URL from baseUrl
+                            c_avatar = contact.get("baseUrl", contact.get("avatarUrl", contact.get("avatar_url")))
                             dwu = MaxUser(
                                 user_id=p_id,
-                                name=contact.get("name", contact.get("firstName", "")),
+                                name=c_name,
                                 username=contact.get("username"),
-                                avatar_url=contact.get("avatarUrl", contact.get("avatar_url")),
+                                avatar_url=c_avatar,
                             )
                             break
                 chat = MaxChat(
