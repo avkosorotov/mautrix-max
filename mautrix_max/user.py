@@ -152,10 +152,14 @@ class User:
             return
 
         if event.type == EventType.MESSAGE_CREATED and event.message:
-            # Don't echo our own messages
-            sender = event.message.sender
-            if sender and self.max_user_id and sender.user_id == self.max_user_id:
-                return
+            # Dedup: skip messages already bridged from Matrix → Max
+            if event.message.message_id:
+                from .db.message import Message as DBMessage
+                existing = await DBMessage.get_by_max_msg_id(
+                    portal.max_chat_id, event.message.message_id
+                )
+                if existing:
+                    return
             await portal.handle_max_message(self, event.message)
         elif event.type == EventType.MESSAGE_EDITED:
             # message_id can be at top level or inside message object
