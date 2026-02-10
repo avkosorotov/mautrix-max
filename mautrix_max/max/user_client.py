@@ -490,24 +490,57 @@ class UserMaxClient(BaseMaxClient):
     # -- Listener ------------------------------------------------------------
 
     async def _listen_loop(self) -> None:
-        """Listen for incoming WebSocket messages."""
-        while self._running and self._ws and not self._ws.closed:
-            try:
-                msg = await self._ws.receive()
-                if msg.type == aiohttp.WSMsgType.TEXT:
-                    data = json.loads(msg.data)
-                    await self._handle_ws_message(data)
-                elif msg.type in (
-                    aiohttp.WSMsgType.CLOSED,
-                    aiohttp.WSMsgType.ERROR,
-                ):
-                    self.log.warning("WebSocket closed: %s", msg.type)
-                    break
-            except asyncio.CancelledError:
+        """Listen for incoming WebSocket messages with auto-reconnect."""
+        backoff = 1
+        while self._running:
+            while self._running and self._ws and not self._ws.closed:
+                try:
+                    msg = await self._ws.receive()
+                    if msg.type == aiohttp.WSMsgType.TEXT:
+                        data = json.loads(msg.data)
+                        await self._handle_ws_message(data)
+                        backoff = 1  # Reset backoff on successful message
+                    elif msg.type in (
+                        aiohttp.WSMsgType.CLOSED,
+                        aiohttp.WSMsgType.ERROR,
+                    ):
+                        self.log.warning("WebSocket closed: %s", msg.type)
+                        break
+                except asyncio.CancelledError:
+                    return
+                except Exception:
+                    self.log.exception("Error in WebSocket listener")
+                    await asyncio.sleep(1)
+
+            # Auto-reconnect if still running (not intentionally disconnected)
+            if not self._running:
                 break
+            self.log.info("Reconnecting in %ds...", backoff)
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, 60)
+            try:
+                session = await self._ensure_session()
+                self._ws = await session.ws_connect(self.ws_url, headers=WS_HEADERS)
+                # Re-auth in separate task — _send_and_wait needs the inner loop
+                # to read responses, so we can't call it inline here
+                asyncio.create_task(self._reconnect_auth())
+            except asyncio.CancelledError:
+                return
             except Exception:
-                self.log.exception("Error in WebSocket listener")
-                await asyncio.sleep(1)
+                self.log.exception("Reconnect failed")
+
+    async def _reconnect_auth(self) -> None:
+        """Re-authenticate after WebSocket reconnect (runs in separate task)."""
+        try:
+            await self._send_and_wait(Opcode.INIT_SESSION, {
+                "userAgent": self._build_user_agent(),
+                "deviceId": self._device_id,
+            })
+            if self.auth_token:
+                await self._login_by_token()
+            self.log.info("Reconnected and re-authenticated successfully")
+        except Exception:
+            self.log.exception("Reconnect auth failed")
 
     async def _handle_ws_message(self, data: dict[str, Any]) -> None:
         """Handle an incoming WebSocket message (ver 11 protocol)."""

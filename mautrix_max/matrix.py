@@ -34,6 +34,10 @@ class MatrixHandler(BaseMatrixHandler):
         from .portal import Portal
         from .user import User
 
+        # Skip events from bridge ghosts/puppets (prevent echo loop)
+        if self.bridge.is_bridge_ghost(evt.sender):
+            return
+
         portal = await Portal.get_by_mxid(evt.room_id)
         if not portal:
             return
@@ -54,6 +58,10 @@ class MatrixHandler(BaseMatrixHandler):
         """Handle a Matrix message redaction (deletion)."""
         from .portal import Portal
         from .user import User
+
+        # Skip events from bridge ghosts/puppets (prevent echo loop)
+        if self.bridge.is_bridge_ghost(user_id):
+            return
 
         portal = await Portal.get_by_mxid(room_id)
         if not portal:
