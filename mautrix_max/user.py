@@ -113,7 +113,7 @@ class User:
         self.max_client.on_event = self._on_max_event
 
         try:
-            await self.max_client.connect()
+            raw_chats = await self.max_client.connect()
             self.log.info("Connected to Max (mode=%s)", self.connection_mode)
             # Store user_id from login response
             if hasattr(self.max_client, '_me') and self.max_client._me:
@@ -121,29 +121,54 @@ class User:
                     self.max_user_id = self.max_client._me.user_id
                     await self._save()
                     self.log.info("Stored user_id: %d", self.max_user_id)
-            # Sync all chats (create portals + Matrix rooms)
-            asyncio.create_task(self._sync_chats())
+            # Sync chats from login response (create portals + Matrix rooms)
+            if raw_chats:
+                asyncio.create_task(self._sync_chats(raw_chats))
         except Exception:
             self.log.exception("Failed to connect to Max")
             self.max_client = None
 
-    async def _sync_chats(self) -> None:
-        """Fetch all chats from Max and create portals/rooms for each."""
-        if not self.max_client or not isinstance(self.max_client, UserMaxClient):
-            return
-        try:
-            chats = await self.max_client.get_all_chats()
-            self.log.info("Syncing %d chats from Max", len(chats))
-            from .portal import Portal
-            for chat in chats:
+    async def _sync_chats(self, raw_chats: list[dict]) -> None:
+        """Create portals/rooms for chats returned by login response."""
+        from .max.types import ChatType, MaxChat, MaxUser
+        from .portal import Portal
+
+        self.log.info("Syncing %d chats from login response", len(raw_chats))
+        created = 0
+        for c in raw_chats:
+            try:
+                chat_id = c.get("chatId", c.get("chat_id", 0))
+                if not chat_id:
+                    continue
+                chat_type_str = c.get("type", "dialog")
+                try:
+                    chat_type = ChatType(chat_type_str)
+                except ValueError:
+                    chat_type = ChatType.DIALOG
+                # Parse dialog partner for DMs
+                dwu = None
+                raw_dwu = c.get("dialogWithUser", c.get("dialog_with_user"))
+                if raw_dwu and isinstance(raw_dwu, dict):
+                    dwu = MaxUser(
+                        user_id=raw_dwu.get("userId", raw_dwu.get("user_id", raw_dwu.get("id", 0))),
+                        name=raw_dwu.get("name", raw_dwu.get("firstName", "")),
+                        username=raw_dwu.get("username"),
+                        avatar_url=raw_dwu.get("avatarUrl", raw_dwu.get("avatar_url")),
+                    )
+                chat = MaxChat(
+                    chat_id=chat_id,
+                    type=chat_type,
+                    title=c.get("title"),
+                    members_count=c.get("membersCount", c.get("members_count", 0)),
+                    dialog_with_user=dwu,
+                )
                 portal = await Portal.get_by_max_chat_id(chat.chat_id)
                 if portal and not portal.mxid:
-                    try:
-                        await portal.create_matrix_room(self, chat)
-                    except Exception:
-                        self.log.exception("Failed to create room for chat %d", chat.chat_id)
-        except Exception:
-            self.log.exception("Failed to sync chats")
+                    await portal.create_matrix_room(self, chat)
+                    created += 1
+            except Exception:
+                self.log.exception("Failed to sync chat %s", c.get("chatId", "?"))
+        self.log.info("Chat sync complete: %d new rooms created", created)
 
     async def disconnect(self) -> None:
         """Disconnect from Max."""
