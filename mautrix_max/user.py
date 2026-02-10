@@ -149,12 +149,23 @@ class User:
                     chat_type = ChatType.DIALOG
                 # For DMs ("dialog"), find the dialog partner from participants
                 dwu = None
-                participants = c.get("participants", [])
+                raw_participants = c.get("participants", {})
                 if chat_type == ChatType.DIALOG and not logged_first_dm:
-                    self.log.debug("First DM chat %s: participants=%s", chat_id, participants[:3] if participants else "empty")
+                    self.log.debug(
+                        "First DM chat %s: participants type=%s, value=%s",
+                        chat_id, type(raw_participants).__name__,
+                        str(raw_participants)[:500],
+                    )
                     logged_first_dm = True
-                if chat_type == ChatType.DIALOG and participants and self.max_user_id:
-                    for p in participants:
+                # participants can be a dict (userId→userData) or a list
+                if isinstance(raw_participants, dict):
+                    participant_list = list(raw_participants.values()) if all(isinstance(v, dict) for v in raw_participants.values()) else [{"userId": int(k)} for k in raw_participants.keys() if str(k).isdigit()]
+                elif isinstance(raw_participants, list):
+                    participant_list = raw_participants
+                else:
+                    participant_list = []
+                if chat_type == ChatType.DIALOG and participant_list and self.max_user_id:
+                    for p in participant_list:
                         if isinstance(p, dict):
                             p_id = p.get("userId", p.get("user_id", p.get("id", 0)))
                             if p_id and p_id != self.max_user_id:
@@ -169,13 +180,26 @@ class User:
                     chat_id=chat_id,
                     type=chat_type,
                     title=c.get("title"),
-                    members_count=len(participants),
+                    members_count=len(participant_list),
                     dialog_with_user=dwu,
                 )
                 portal = await Portal.get_by_max_chat_id(chat.chat_id)
                 if portal and not portal.mxid:
                     await portal.create_matrix_room(self, chat)
                     created += 1
+                elif portal and portal.mxid and chat.display_title != f"Chat {chat.chat_id}":
+                    # Update name for existing portals with placeholder names
+                    if portal.name != chat.display_title:
+                        old_name = portal.name
+                        portal.name = chat.display_title
+                        await portal._save()
+                        # Also update the Matrix room name
+                        try:
+                            intent = portal._get_main_intent()
+                            await intent.set_room_name(portal.mxid, chat.display_title)
+                        except Exception:
+                            self.log.debug("Could not update room name for %s", portal.mxid)
+                        self.log.info("Updated portal name: %s -> %s", old_name, portal.name)
             except Exception:
                 self.log.exception("Failed to sync chat %s", c.get("chatId", "?"))
         self.log.info("Chat sync complete: %d new rooms created", created)
