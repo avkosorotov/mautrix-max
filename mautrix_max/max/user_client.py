@@ -35,6 +35,16 @@ from .types import (
 PROTOCOL_VERSION = 11
 APP_VERSION = "26.2.2"
 
+# Headers required by ws-api.oneme.ru to accept WebSocket upgrade (403 without them)
+WS_HEADERS = {
+    "Origin": "https://web.max.ru",
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/131.0.0.0 Safari/537.36"
+    ),
+}
+
 
 class Opcode:
     """WebSocket opcodes reverse-engineered from web.max.ru client."""
@@ -247,7 +257,7 @@ class UserMaxClient(BaseMaxClient):
     async def connect(self) -> None:
         """Connect to WebSocket and authenticate with saved token."""
         session = await self._ensure_session()
-        self._ws = await session.ws_connect(self.ws_url)
+        self._ws = await session.ws_connect(self.ws_url, headers=WS_HEADERS)
         self._running = True
 
         # Step 1: Send INIT_SESSION (client sends first, no waiting for HELLO)
@@ -333,7 +343,7 @@ class UserMaxClient(BaseMaxClient):
     async def _init_auth_session(self) -> None:
         """Open WS, start listener, and send INIT_SESSION. Used by auth flows."""
         session = await self._ensure_session()
-        self._ws = await session.ws_connect(self.ws_url)
+        self._ws = await session.ws_connect(self.ws_url, headers=WS_HEADERS)
         self._running = True
         # Start listener so server heartbeats are handled during auth
         self._listen_task = asyncio.create_task(self._listen_loop())
