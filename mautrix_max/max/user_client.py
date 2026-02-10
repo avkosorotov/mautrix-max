@@ -536,10 +536,9 @@ class UserMaxClient(BaseMaxClient):
                     },
                     seq=seq,
                 )
-                try:
-                    await self._handle_incoming_event(opcode, payload)
-                except Exception:
-                    self.log.exception("Error handling incoming message")
+                # Handle in separate task to avoid deadlock:
+                # handler may call _send_and_wait, which needs _listen_loop to read the response
+                asyncio.create_task(self._safe_handle_event(opcode, payload))
                 return
             # Other incoming events (edit, delete, typing, etc.)
             if opcode in (
@@ -548,10 +547,7 @@ class UserMaxClient(BaseMaxClient):
                 Opcode.INCOMING_READ,
                 Opcode.INCOMING_TYPING,
             ):
-                try:
-                    await self._handle_incoming_event(opcode, payload)
-                except Exception:
-                    self.log.exception("Error handling incoming event opcode=%s", opcode)
+                asyncio.create_task(self._safe_handle_event(opcode, payload))
                 return
 
         elif cmd == Cmd.RESPONSE:
@@ -579,10 +575,20 @@ class UserMaxClient(BaseMaxClient):
             # Ack — just ignore
             return
 
+    async def _safe_handle_event(self, opcode: int, payload: dict[str, Any]) -> None:
+        """Wrapper that catches exceptions so create_task doesn't lose them."""
+        try:
+            await self._handle_incoming_event(opcode, payload)
+        except Exception:
+            self.log.exception("Error handling incoming event opcode=%s", opcode)
+
     async def _handle_incoming_event(
         self, opcode: int, payload: dict[str, Any]
     ) -> None:
-        """Parse and dispatch an incoming event from the WS stream."""
+        """Parse and dispatch an incoming event from the WS stream.
+        NOTE: Called in a separate task (via _safe_handle_event) to avoid
+        deadlocking the _listen_loop when handlers call _send_and_wait.
+        """
         opcode_to_event = {
             Opcode.INCOMING_MESSAGE: EventType.MESSAGE_CREATED,
             Opcode.INCOMING_EDIT: EventType.MESSAGE_EDITED,
