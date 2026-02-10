@@ -137,7 +137,8 @@ class User:
         created = 0
         for c in raw_chats:
             try:
-                chat_id = c.get("chatId", c.get("chat_id", 0))
+                # Login response uses "id" for chat ID (not "chatId")
+                chat_id = c.get("id", c.get("chatId", c.get("chat_id", 0)))
                 if not chat_id:
                     continue
                 chat_type_str = c.get("type", "dialog")
@@ -145,21 +146,26 @@ class User:
                     chat_type = ChatType(chat_type_str)
                 except ValueError:
                     chat_type = ChatType.DIALOG
-                # Parse dialog partner for DMs
+                # For DMs ("dialog"), find the dialog partner from participants
                 dwu = None
-                raw_dwu = c.get("dialogWithUser", c.get("dialog_with_user"))
-                if raw_dwu and isinstance(raw_dwu, dict):
-                    dwu = MaxUser(
-                        user_id=raw_dwu.get("userId", raw_dwu.get("user_id", raw_dwu.get("id", 0))),
-                        name=raw_dwu.get("name", raw_dwu.get("firstName", "")),
-                        username=raw_dwu.get("username"),
-                        avatar_url=raw_dwu.get("avatarUrl", raw_dwu.get("avatar_url")),
-                    )
+                participants = c.get("participants", [])
+                if chat_type == ChatType.DIALOG and participants and self.max_user_id:
+                    for p in participants:
+                        if isinstance(p, dict):
+                            p_id = p.get("userId", p.get("user_id", p.get("id", 0)))
+                            if p_id and p_id != self.max_user_id:
+                                dwu = MaxUser(
+                                    user_id=p_id,
+                                    name=p.get("name", p.get("firstName", "")),
+                                    username=p.get("username"),
+                                    avatar_url=p.get("avatarUrl", p.get("avatar_url")),
+                                )
+                                break
                 chat = MaxChat(
                     chat_id=chat_id,
                     type=chat_type,
                     title=c.get("title"),
-                    members_count=c.get("membersCount", c.get("members_count", 0)),
+                    members_count=len(participants),
                     dialog_with_user=dwu,
                 )
                 portal = await Portal.get_by_max_chat_id(chat.chat_id)
