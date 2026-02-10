@@ -158,7 +158,6 @@ class User:
             len(raw_chats), self.max_user_id, len(contacts_map),
         )
         created = 0
-        logged_first_dm = False
         for c in raw_chats:
             try:
                 # Login response uses "id" for chat ID (not "chatId")
@@ -173,13 +172,6 @@ class User:
                 # For DMs ("dialog"), find the dialog partner from participants
                 dwu = None
                 raw_participants = c.get("participants", {})
-                if chat_type == ChatType.DIALOG and not logged_first_dm:
-                    self.log.debug(
-                        "First DM chat %s: participants type=%s, value=%s",
-                        chat_id, type(raw_participants).__name__,
-                        str(raw_participants)[:500],
-                    )
-                    logged_first_dm = True
                 # participants can be a dict {userId: lastReadTs} or a list
                 if isinstance(raw_participants, dict):
                     participant_ids = []

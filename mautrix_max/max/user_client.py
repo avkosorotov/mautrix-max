@@ -325,13 +325,11 @@ class UserMaxClient(BaseMaxClient):
         raw_chats = resp.get("chats", resp.get("dialogs", []))
         contacts = resp.get("contacts", {})
         if raw_chats:
-            self.log.info("Login response contains %d chats, %d contacts", len(raw_chats), len(contacts) if isinstance(contacts, (dict, list)) else 0)
-            if raw_chats:
-                self.log.debug("First chat keys: %s", list(raw_chats[0].keys()) if isinstance(raw_chats[0], dict) else type(raw_chats[0]))
-        if contacts:
-            # Log contacts structure for debugging
-            sample = str(contacts)[:500] if isinstance(contacts, (dict, list)) else str(type(contacts))
-            self.log.debug("Contacts sample: %s", sample)
+            self.log.info(
+                "Login response contains %d chats, %d contacts",
+                len(raw_chats),
+                len(contacts) if isinstance(contacts, (dict, list)) else 0,
+            )
         return {"chats": raw_chats, "contacts": contacts}
 
     async def _close_ws(self) -> None:
