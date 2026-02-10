@@ -610,11 +610,25 @@ class UserMaxClient(BaseMaxClient):
                         name=raw_sender.get("name", raw_sender.get("firstName", "")),
                         username=raw_sender.get("username"),
                     )
+            # Build body dict — Bot API has body as dict, User API has text/attaches at top level
+            raw_body = raw_msg.get("body")
+            if isinstance(raw_body, dict):
+                body = raw_body
+            else:
+                # User API format: text and attaches at message top level
+                body = {}
+                text = raw_msg.get("text")
+                if text:
+                    body["text"] = text
+                attaches = raw_msg.get("attaches", raw_msg.get("attachments"))
+                if attaches:
+                    body["attachments"] = attaches
+
             message = MaxMessage(
                 mid=str(raw_msg.get("mid", raw_msg.get("id", raw_msg.get("messageId", "")))),
-                timestamp=raw_msg.get("timestamp", 0),
+                timestamp=raw_msg.get("timestamp", raw_msg.get("time", 0)),
                 sender=sender,
-                body=raw_msg.get("body", raw_msg.get("text")),
+                body=body or None,
                 recipient=raw_msg.get("recipient"),
             )
 
