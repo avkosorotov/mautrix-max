@@ -139,9 +139,9 @@ class Puppet:
                 self.log.exception("Failed to set avatar")
 
         if changed:
-            await self._save()
+            await self.save()
 
-    async def _save(self) -> None:
+    async def save(self) -> None:
         await DBPuppet.insert_or_update(
             max_user_id=self.max_user_id,
             name=self.name,
