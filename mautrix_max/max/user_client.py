@@ -526,16 +526,20 @@ class UserMaxClient(BaseMaxClient):
                 return
             if opcode == Opcode.INCOMING_MESSAGE:
                 # ACK the incoming message
+                raw_msg = payload.get("message", payload)
                 await self._send_raw(
                     Cmd.RESPONSE,
                     Opcode.INCOMING_MESSAGE,
                     {
                         "chatId": payload.get("chatId"),
-                        "messageId": payload.get("message", {}).get("id"),
+                        "messageId": raw_msg.get("id", raw_msg.get("messageId")) if isinstance(raw_msg, dict) else None,
                     },
                     seq=seq,
                 )
-                await self._handle_incoming_event(opcode, payload)
+                try:
+                    await self._handle_incoming_event(opcode, payload)
+                except Exception:
+                    self.log.exception("Error handling incoming message")
                 return
             # Other incoming events (edit, delete, typing, etc.)
             if opcode in (
@@ -544,7 +548,10 @@ class UserMaxClient(BaseMaxClient):
                 Opcode.INCOMING_READ,
                 Opcode.INCOMING_TYPING,
             ):
-                await self._handle_incoming_event(opcode, payload)
+                try:
+                    await self._handle_incoming_event(opcode, payload)
+                except Exception:
+                    self.log.exception("Error handling incoming event opcode=%s", opcode)
                 return
 
         elif cmd == Cmd.RESPONSE:
@@ -586,26 +593,33 @@ class UserMaxClient(BaseMaxClient):
             self.log.debug("Unhandled incoming opcode: %s", opcode)
             return
 
+        self.log.debug("Incoming event opcode=%s payload=%s", opcode, payload)
+
         message = None
-        raw_msg = payload.get("message", {})
-        if raw_msg:
+        raw_msg = payload.get("message", payload)
+        if raw_msg and isinstance(raw_msg, dict):
             sender = None
-            raw_sender = raw_msg.get("sender", raw_msg.get("from", {}))
-            if raw_sender:
-                sender = MaxUser(
-                    user_id=raw_sender.get("userId", raw_sender.get("user_id", 0)),
-                    name=raw_sender.get("name", ""),
-                    username=raw_sender.get("username"),
-                )
+            raw_sender = raw_msg.get("sender", raw_msg.get("from"))
+            if raw_sender is not None:
+                if isinstance(raw_sender, int):
+                    # User API sends sender as plain int (user_id)
+                    sender = MaxUser(user_id=raw_sender, name=str(raw_sender))
+                elif isinstance(raw_sender, dict):
+                    sender = MaxUser(
+                        user_id=raw_sender.get("userId", raw_sender.get("user_id", 0)),
+                        name=raw_sender.get("name", raw_sender.get("firstName", "")),
+                        username=raw_sender.get("username"),
+                    )
             message = MaxMessage(
-                mid=str(raw_msg.get("id", raw_msg.get("mid", ""))),
+                mid=str(raw_msg.get("mid", raw_msg.get("id", raw_msg.get("messageId", "")))),
                 timestamp=raw_msg.get("timestamp", 0),
                 sender=sender,
-                body=raw_msg.get("body"),
+                body=raw_msg.get("body", raw_msg.get("text")),
                 recipient=raw_msg.get("recipient"),
             )
 
-        chat_id = payload.get("chatId", payload.get("chat_id", 0))
+        chat_id = payload.get("chatId", payload.get("chat_id",
+                  raw_msg.get("chatId", 0) if isinstance(raw_msg, dict) else 0))
         event = MaxEvent(
             type=event_type,
             chat_id=chat_id,
