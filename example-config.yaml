@@ -30,7 +30,7 @@ max:
 # Bridge-specific settings
 bridge:
     username_template: "max_{userid}"
-    displayname_template: "{displayname} (Max)"
+    displayname_template: "{displayname}"
     command_prefix: "!max"
     permissions:
         "*": "relay"

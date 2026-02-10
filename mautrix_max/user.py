@@ -141,10 +141,16 @@ class User:
             if sender and self.max_user_id and sender.user_id == self.max_user_id:
                 return
             await portal.handle_max_message(self, event.message)
-        elif event.type == EventType.MESSAGE_EDITED and event.message_id:
-            await portal.handle_max_edit(event.message_id, event.new_text or "")
-        elif event.type == EventType.MESSAGE_REMOVED and event.message_id:
-            await portal.handle_max_delete(event.message_id)
+        elif event.type == EventType.MESSAGE_EDITED:
+            # message_id can be at top level or inside message object
+            msg_id = event.message_id or (event.message.message_id if event.message else None)
+            new_text = (event.message.text if event.message else None) or ""
+            if msg_id:
+                await portal.handle_max_edit(msg_id, new_text)
+        elif event.type == EventType.MESSAGE_REMOVED:
+            msg_id = event.message_id or (event.message.message_id if event.message else None)
+            if msg_id:
+                await portal.handle_max_delete(msg_id)
 
     async def login_bot(self, token: str) -> None:
         """Set up bot mode with the given token."""

@@ -238,14 +238,15 @@ class Portal:
             self.max_chat_id, text, reply_to=reply_to
         )
 
-        # Save message mapping
-        from .db.message import Message as DBMessage
-        await DBMessage.insert(
-            max_chat_id=self.max_chat_id,
-            max_msg_id=max_msg.message_id,
-            mxid=str(event_id),
-            mx_room=str(self.mxid),
-        )
+        # Save message mapping (skip if message_id is empty)
+        if max_msg.message_id:
+            from .db.message import Message as DBMessage
+            await DBMessage.insert(
+                max_chat_id=self.max_chat_id,
+                max_msg_id=max_msg.message_id,
+                mxid=str(event_id),
+                mx_room=str(self.mxid),
+            )
 
     async def handle_matrix_redaction(self, sender: User, event_id: EventID) -> None:
         """Handle a Matrix message redaction (deletion)."""

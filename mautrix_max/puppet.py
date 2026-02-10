@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Optional
 
+import aiohttp
 from mautrix.appservice import IntentAPI
 from mautrix.types import UserID
 
@@ -127,14 +128,25 @@ class Puppet:
         if changed or not self.name_set:
             try:
                 await self.intent.set_displayname(self.displayname)
-                self.name_set = True
+                if not self.name_set:
+                    self.name_set = True
+                    changed = True
             except Exception:
                 self.log.exception("Failed to set displayname")
 
         if info.avatar_url and not self.avatar_set:
             try:
-                # Download and re-upload avatar
-                pass  # TODO: implement avatar sync
+                async with aiohttp.ClientSession() as sess:
+                    async with sess.get(info.avatar_url) as resp:
+                        if resp.status == 200:
+                            data = await resp.read()
+                            mime = resp.headers.get("Content-Type", "image/png")
+                            mxc = await self.intent.upload_media(data, mime_type=mime)
+                            await self.intent.set_avatar_url(mxc)
+                            self.avatar_mxc = str(mxc)
+                            self.avatar_set = True
+                            changed = True
+                            self.log.info("Set avatar from %s -> %s", info.avatar_url, mxc)
             except Exception:
                 self.log.exception("Failed to set avatar")
 
