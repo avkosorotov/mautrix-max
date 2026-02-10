@@ -114,6 +114,12 @@ class User:
         try:
             await self.max_client.connect()
             self.log.info("Connected to Max (mode=%s)", self.connection_mode)
+            # Store bot's own user_id to filter echoed messages
+            if hasattr(self.max_client, '_me') and self.max_client._me:
+                if not self.max_user_id:
+                    self.max_user_id = self.max_client._me.user_id
+                    await self._save()
+                    self.log.info("Stored bot user_id: %d", self.max_user_id)
         except Exception:
             self.log.exception("Failed to connect to Max")
             self.max_client = None
