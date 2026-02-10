@@ -116,13 +116,20 @@ class Portal:
             if self.mxid:
                 return self.mxid
 
+            is_direct = info.type.value == "dialog" if info else False
+
             if info:
-                self.name = info.display_title
+                if is_direct and not info.title:
+                    # For DMs, try to get the other user's name
+                    dm_name = await self._get_dm_name(source, info)
+                    self.name = dm_name or info.display_title
+                else:
+                    self.name = info.display_title
 
             main_intent = self._get_main_intent()
             room_id = await main_intent.create_room(
                 name=self.name,
-                is_direct=(info.type.value == "dialog" if info else False),
+                is_direct=is_direct,
                 invitees=[source.mxid],
             )
             self.mxid = room_id
@@ -144,6 +151,20 @@ class Portal:
                 except Exception:
                     pass
             await self.create_matrix_room(source, chat_info)
+
+            # Proactively fetch member info (including avatars) for the room
+            if source.max_client:
+                try:
+                    members = await source.max_client.get_chat_members(self.max_chat_id)
+                    from .puppet import Puppet
+                    for member in members:
+                        if source.max_user_id and member.user_id == source.max_user_id:
+                            continue  # Skip the bot itself
+                        puppet = await Puppet.get_by_max_user_id(member.user_id)
+                        if puppet:
+                            await puppet.update_info(member)
+                except Exception:
+                    self.log.debug("Could not fetch chat members for avatar sync")
 
         # Get puppet for the sender
         puppet = None
@@ -260,6 +281,20 @@ class Portal:
             await sender.max_client.delete_message(db_msg.max_msg_id)
 
     # ── Helpers ─────────────────────────────────────────────────
+
+    async def _get_dm_name(self, source: User, info: MaxChat) -> str | None:
+        """Get the other participant's name for a DM chat."""
+        if not source.max_client:
+            return None
+        try:
+            members = await source.max_client.get_chat_members(self.max_chat_id)
+            for member in members:
+                if source.max_user_id and member.user_id == source.max_user_id:
+                    continue
+                return member.display_name
+        except Exception:
+            self.log.debug("Could not get DM name from chat members")
+        return None
 
     def _get_main_intent(self) -> IntentAPI:
         if self._main_intent is None:

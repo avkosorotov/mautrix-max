@@ -202,6 +202,7 @@ class BotMaxClient(BaseMaxClient):
                 user_id=raw_user.get("user_id", 0),
                 name=raw_user.get("name", ""),
                 username=raw_user.get("username"),
+                avatar_url=raw_user.get("full_avatar_url") or raw_user.get("avatar_url"),
             )
 
         event = MaxEvent(

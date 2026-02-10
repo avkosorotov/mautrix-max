@@ -137,6 +137,16 @@ class User:
         """Handle an event from Max and dispatch to the appropriate portal."""
         from .portal import Portal
 
+        # BOT_STARTED: user started the bot — update puppet with avatar info
+        if event.type == EventType.BOT_STARTED and event.user:
+            from .puppet import Puppet
+            puppet = await Puppet.get_by_max_user_id(event.user.user_id)
+            if puppet:
+                await puppet.update_info(event.user)
+            # Also ensure portal exists for future messages
+            portal = await Portal.get_by_max_chat_id(event.chat_id)
+            return
+
         portal = await Portal.get_by_max_chat_id(event.chat_id)
         if not portal:
             return
