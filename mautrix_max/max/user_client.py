@@ -98,9 +98,10 @@ class Opcode:
     # Incoming events from server
     INCOMING_MESSAGE = 128
     INCOMING_EDIT = 129
-    INCOMING_DELETE = 130
-    INCOMING_READ = 131
-    INCOMING_TYPING = 132
+    INCOMING_READ_MARKER = 130  # {setAsUnread, chatId, userId, unread, mark}
+    INCOMING_DELETE = 131       # Real delete opcode (TBD — not yet confirmed)
+    INCOMING_PRESENCE = 132     # {presence: {seen, status}, userId}
+    INCOMING_REACTION = 156     # {chatId, messageId, reactionInfo: {counters, yourReaction, totalCount}}
 
     # 2FA
     TWO_FA_PASSWORD = 115  # {trackId, password}
@@ -595,15 +596,17 @@ class UserMaxClient(BaseMaxClient):
                 # handler may call _send_and_wait, which needs _listen_loop to read the response
                 asyncio.create_task(self._safe_handle_event(opcode, payload))
                 return
-            # Other incoming events (edit, delete, typing, reactions, etc.)
+            # Other incoming events (edit, delete, reactions, presence, etc.)
             if opcode in (
                 Opcode.INCOMING_EDIT,
                 Opcode.INCOMING_DELETE,
-                Opcode.INCOMING_READ,
-                Opcode.INCOMING_TYPING,
+                Opcode.INCOMING_REACTION,
                 Opcode.REACT,
             ):
                 asyncio.create_task(self._safe_handle_event(opcode, payload))
+                return
+            # Ignore high-frequency events (presence updates, read markers)
+            if opcode in (Opcode.INCOMING_PRESENCE, Opcode.INCOMING_READ_MARKER):
                 return
             # Log unknown incoming opcodes for discovery
             self.log.info(
@@ -652,7 +655,32 @@ class UserMaxClient(BaseMaxClient):
         """
         self.log.debug("Incoming event opcode=%s payload=%s", opcode, payload)
 
-        # --- Reaction (opcode 178) ---
+        # --- Incoming reaction (opcode 156) ---
+        # Payload: {chatId, messageId, reactionInfo: {counters: [{count, reaction}], yourReaction, totalCount}}
+        if opcode == Opcode.INCOMING_REACTION:
+            chat_id = payload.get("chatId", 0)
+            msg_id = payload.get("messageId", "")
+            reaction_info = payload.get("reactionInfo", {})
+            your_reaction = reaction_info.get("yourReaction", "")
+            if chat_id and msg_id:
+                # We get aggregate info, not per-sender. Use logged-in user ID for own reactions.
+                my_user_id = getattr(self, "_viewer_id", 0)
+                self.log.debug(
+                    "Incoming reaction: chat=%s msg=%s yourReaction=%s counters=%s",
+                    chat_id, msg_id, your_reaction, reaction_info.get("counters"),
+                )
+                event = MaxEvent(
+                    type=EventType.REACTION,
+                    chat_id=chat_id,
+                    message_id=msg_id,
+                    reaction=your_reaction or "",
+                    sender_id=my_user_id,
+                    timestamp=payload.get("timestamp", int(time.time())),
+                )
+                await self._dispatch_event(event)
+            return
+
+        # --- Reaction echo from opcode 178 (REACT) ---
         if opcode == Opcode.REACT:
             chat_id = payload.get("chatId", payload.get("chat_id", 0))
             msg_id = payload.get("messageId", payload.get("message_id", ""))
@@ -671,43 +699,11 @@ class UserMaxClient(BaseMaxClient):
                 await self._dispatch_event(event)
             return
 
-        # --- Read receipt (opcode 131) ---
-        if opcode == Opcode.INCOMING_READ:
-            chat_id = payload.get("chatId", payload.get("chat_id", 0))
-            msg_id = payload.get("messageId", payload.get("message_id", ""))
-            sender_id = payload.get("senderId", payload.get("sender_id",
-                        payload.get("userId", payload.get("user_id", 0))))
-            if chat_id:
-                event = MaxEvent(
-                    type=EventType.READ_RECEIPT,
-                    chat_id=chat_id,
-                    message_id=msg_id,
-                    sender_id=sender_id,
-                    timestamp=payload.get("timestamp", int(time.time())),
-                )
-                await self._dispatch_event(event)
-            return
-
-        # --- Typing indicator (opcode 132) ---
-        if opcode == Opcode.INCOMING_TYPING:
-            chat_id = payload.get("chatId", payload.get("chat_id", 0))
-            sender_id = payload.get("senderId", payload.get("sender_id",
-                        payload.get("userId", payload.get("user_id", 0))))
-            if chat_id:
-                event = MaxEvent(
-                    type=EventType.TYPING,
-                    chat_id=chat_id,
-                    sender_id=sender_id,
-                    timestamp=payload.get("timestamp", int(time.time())),
-                )
-                await self._dispatch_event(event)
-            return
-
-        # --- Message events (128, 129, 130) ---
+        # --- Message events (128, 129, 131) ---
         opcode_to_event = {
             Opcode.INCOMING_MESSAGE: EventType.MESSAGE_CREATED,
             Opcode.INCOMING_EDIT: EventType.MESSAGE_EDITED,
-            Opcode.INCOMING_DELETE: EventType.MESSAGE_REMOVED,
+            Opcode.INCOMING_DELETE: EventType.MESSAGE_REMOVED,  # 131 — TBD, needs confirmation
         }
         event_type = opcode_to_event.get(opcode)
         if not event_type:
