@@ -449,6 +449,19 @@ class User:
             msg_id = event.message_id or (event.message.message_id if event.message else None)
             if msg_id:
                 await portal.handle_max_delete(msg_id)
+        elif event.type == EventType.REACTION:
+            if event.message_id and event.sender_id and event.sender_id > 0:
+                await portal.handle_max_reaction(
+                    event.sender_id, event.message_id, event.reaction or ""
+                )
+        elif event.type == EventType.READ_RECEIPT:
+            if event.sender_id and event.sender_id > 0:
+                await portal.handle_max_read_receipt(
+                    event.sender_id, event.message_id or ""
+                )
+        elif event.type == EventType.TYPING:
+            if event.sender_id and event.sender_id > 0:
+                await portal.handle_max_typing(event.sender_id)
 
     async def login_bot(self, token: str) -> None:
         """Set up bot mode with the given token."""

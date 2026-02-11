@@ -66,3 +66,11 @@ async def upgrade_v2(conn, scheme) -> None:
     await conn.execute(
         "ALTER TABLE puppet ADD COLUMN is_registered BOOLEAN NOT NULL DEFAULT false"
     )
+
+
+@upgrade_table.register(description="Add index on reaction for max_ids lookup")
+async def upgrade_v3(conn, scheme) -> None:
+    await conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_reaction_max_ids "
+        "ON reaction (max_chat_id, max_msg_id, max_sender_id)"
+    )

@@ -12,7 +12,7 @@ from mautrix.types import RoomID, UserID
 
 from . import __version__
 from .config import Config
-from .db import DBMessage, DBPortal, DBPuppet, DBUser, upgrade_table
+from .db import DBMessage, DBPortal, DBPuppet, DBReaction, DBUser, upgrade_table
 from .matrix import MatrixHandler
 from .portal import Portal
 from .puppet import Puppet
@@ -42,6 +42,7 @@ class MaxBridge(Bridge):
         DBPuppet.db = self.db
         DBUser.db = self.db
         DBMessage.db = self.db
+        DBReaction.db = self.db
 
     async def _check_license(self) -> tuple[bool, str]:
         """Check MergeChat license. Returns (valid, error_message)."""

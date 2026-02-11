@@ -400,10 +400,157 @@ class Portal:
         """Handle a Matrix message redaction (deletion)."""
         if not sender.max_client:
             return
+
+        # Check if this is a reaction redaction (un-react)
+        from .db.reaction import Reaction as DBReaction
+        db_reaction = await DBReaction.get_by_mxid(str(event_id))
+        if db_reaction:
+            # Removing a reaction — send empty reaction to Max to toggle it off
+            await sender.max_client.add_reaction(
+                db_reaction.max_chat_id, db_reaction.max_msg_id, db_reaction.reaction
+            )
+            await DBReaction.delete_by_mxid(str(event_id))
+            return
+
         from .db.message import Message as DBMessage
         db_msg = await DBMessage.get_by_mxid(str(event_id))
         if db_msg:
             await sender.max_client.delete_message(db_msg.max_msg_id)
+
+    # ── Reactions ────────────────────────────────────────────────
+
+    async def handle_max_reaction(
+        self, sender_id: int, message_id: str, emoji: str
+    ) -> None:
+        """Handle an incoming reaction from Max and relay to Matrix."""
+        if not self.mxid or sender_id <= 0:
+            return
+
+        from .db.message import Message as DBMessage
+        from .db.reaction import Reaction as DBReaction
+        from .puppet import Puppet
+
+        # Find the Matrix event for the message being reacted to
+        db_msg = await DBMessage.get_by_max_msg_id(self.max_chat_id, message_id)
+        if not db_msg:
+            self.log.debug("Reaction target message %s not found in DB", message_id)
+            return
+
+        # Check if a reaction from this sender already exists
+        existing = await DBReaction.get_by_max_ids(
+            self.max_chat_id, message_id, sender_id
+        )
+        if existing and existing.reaction == emoji:
+            return  # Already bridged (dedup)
+
+        # Get puppet for the sender
+        puppet = await Puppet.get_by_max_user_id(sender_id)
+        intent = puppet.intent if puppet else self._get_main_intent()
+
+        # If changing or removing reaction, redact the old one first
+        if existing:
+            try:
+                await intent.redact(RoomID(self.mxid), EventID(existing.mxid))
+            except Exception:
+                self.log.debug("Failed to redact old reaction")
+            await DBReaction.delete_by_mxid(existing.mxid)
+
+        # Empty emoji = un-react only (don't create a new reaction)
+        if not emoji:
+            return
+
+        # Send reaction to Matrix
+        target_event_id = EventID(db_msg.mxid)
+        content = {
+            "m.relates_to": {
+                "rel_type": "m.annotation",
+                "event_id": str(target_event_id),
+                "key": emoji,
+            }
+        }
+        try:
+            mx_event_id = await intent.send_message_event(
+                RoomID(self.mxid), EventType.REACTION, content
+            )
+            # Save reaction mapping
+            await DBReaction.insert(
+                mxid=str(mx_event_id),
+                max_chat_id=self.max_chat_id,
+                max_msg_id=message_id,
+                max_sender_id=sender_id,
+                reaction=emoji,
+            )
+            self.log.debug("Bridged reaction %s from Max user %d", emoji, sender_id)
+        except Exception:
+            self.log.exception("Failed to send reaction to Matrix")
+
+    async def handle_matrix_reaction(
+        self, sender: User, event_id: EventID, emoji: str, target_event_id: EventID
+    ) -> None:
+        """Handle a Matrix reaction and relay to Max."""
+        if not sender.max_client:
+            return
+
+        from .db.message import Message as DBMessage
+        from .db.reaction import Reaction as DBReaction
+
+        # Find the Max message being reacted to
+        db_msg = await DBMessage.get_by_mxid(str(target_event_id))
+        if not db_msg:
+            self.log.debug("Reaction target Matrix event %s not found", target_event_id)
+            return
+
+        # Send reaction to Max
+        await sender.max_client.add_reaction(
+            db_msg.max_chat_id, db_msg.max_msg_id, emoji
+        )
+
+        # Save reaction mapping
+        await DBReaction.insert(
+            mxid=str(event_id),
+            max_chat_id=self.max_chat_id,
+            max_msg_id=db_msg.max_msg_id,
+            max_sender_id=sender.max_user_id or 0,
+            reaction=emoji,
+        )
+        self.log.debug("Bridged reaction %s from Matrix to Max", emoji)
+
+    # ── Read receipts & typing ───────────────────────────────────
+
+    async def handle_max_read_receipt(self, sender_id: int, message_id: str) -> None:
+        """Handle an incoming read receipt from Max and relay to Matrix."""
+        if not self.mxid or not message_id:
+            return
+
+        from .db.message import Message as DBMessage
+        from .puppet import Puppet
+
+        db_msg = await DBMessage.get_by_max_msg_id(self.max_chat_id, message_id)
+        if not db_msg:
+            return
+
+        puppet = await Puppet.get_by_max_user_id(sender_id)
+        intent = puppet.intent if puppet else self._get_main_intent()
+
+        try:
+            await intent.mark_read(RoomID(self.mxid), EventID(db_msg.mxid))
+        except Exception:
+            self.log.debug("Failed to send read receipt to Matrix")
+
+    async def handle_max_typing(self, sender_id: int) -> None:
+        """Handle a typing indicator from Max and relay to Matrix."""
+        if not self.mxid:
+            return
+
+        from .puppet import Puppet
+
+        puppet = await Puppet.get_by_max_user_id(sender_id)
+        intent = puppet.intent if puppet else self._get_main_intent()
+
+        try:
+            await intent.set_typing(RoomID(self.mxid), timeout=15000)
+        except Exception:
+            self.log.debug("Failed to send typing indicator to Matrix")
 
     # ── Helpers ─────────────────────────────────────────────────
 

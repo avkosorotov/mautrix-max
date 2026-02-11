@@ -42,6 +42,9 @@ class EventType(str, enum.Enum):
     USER_ADDED = "user_added"
     USER_REMOVED = "user_removed"
     CHAT_TITLE_CHANGED = "chat_title_changed"
+    REACTION = "reaction"
+    READ_RECEIPT = "read_receipt"
+    TYPING = "typing"
 
 
 class MaxUser(BaseModel):

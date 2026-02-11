@@ -595,15 +595,21 @@ class UserMaxClient(BaseMaxClient):
                 # handler may call _send_and_wait, which needs _listen_loop to read the response
                 asyncio.create_task(self._safe_handle_event(opcode, payload))
                 return
-            # Other incoming events (edit, delete, typing, etc.)
+            # Other incoming events (edit, delete, typing, reactions, etc.)
             if opcode in (
                 Opcode.INCOMING_EDIT,
                 Opcode.INCOMING_DELETE,
                 Opcode.INCOMING_READ,
                 Opcode.INCOMING_TYPING,
+                Opcode.REACT,
             ):
                 asyncio.create_task(self._safe_handle_event(opcode, payload))
                 return
+            # Log unknown incoming opcodes for discovery
+            self.log.info(
+                "Unknown incoming opcode=%s cmd=%s payload=%s",
+                opcode, cmd, payload,
+            )
 
         elif cmd == Cmd.RESPONSE:
             # Response to our request
@@ -644,6 +650,60 @@ class UserMaxClient(BaseMaxClient):
         NOTE: Called in a separate task (via _safe_handle_event) to avoid
         deadlocking the _listen_loop when handlers call _send_and_wait.
         """
+        self.log.debug("Incoming event opcode=%s payload=%s", opcode, payload)
+
+        # --- Reaction (opcode 178) ---
+        if opcode == Opcode.REACT:
+            chat_id = payload.get("chatId", payload.get("chat_id", 0))
+            msg_id = payload.get("messageId", payload.get("message_id", ""))
+            reaction_emoji = payload.get("reaction", "")
+            sender_id = payload.get("senderId", payload.get("sender_id",
+                        payload.get("userId", payload.get("user_id", 0))))
+            if chat_id and msg_id:
+                event = MaxEvent(
+                    type=EventType.REACTION,
+                    chat_id=chat_id,
+                    message_id=msg_id,
+                    reaction=reaction_emoji,
+                    sender_id=sender_id,
+                    timestamp=payload.get("timestamp", int(time.time())),
+                )
+                await self._dispatch_event(event)
+            return
+
+        # --- Read receipt (opcode 131) ---
+        if opcode == Opcode.INCOMING_READ:
+            chat_id = payload.get("chatId", payload.get("chat_id", 0))
+            msg_id = payload.get("messageId", payload.get("message_id", ""))
+            sender_id = payload.get("senderId", payload.get("sender_id",
+                        payload.get("userId", payload.get("user_id", 0))))
+            if chat_id:
+                event = MaxEvent(
+                    type=EventType.READ_RECEIPT,
+                    chat_id=chat_id,
+                    message_id=msg_id,
+                    sender_id=sender_id,
+                    timestamp=payload.get("timestamp", int(time.time())),
+                )
+                await self._dispatch_event(event)
+            return
+
+        # --- Typing indicator (opcode 132) ---
+        if opcode == Opcode.INCOMING_TYPING:
+            chat_id = payload.get("chatId", payload.get("chat_id", 0))
+            sender_id = payload.get("senderId", payload.get("sender_id",
+                        payload.get("userId", payload.get("user_id", 0))))
+            if chat_id:
+                event = MaxEvent(
+                    type=EventType.TYPING,
+                    chat_id=chat_id,
+                    sender_id=sender_id,
+                    timestamp=payload.get("timestamp", int(time.time())),
+                )
+                await self._dispatch_event(event)
+            return
+
+        # --- Message events (128, 129, 130) ---
         opcode_to_event = {
             Opcode.INCOMING_MESSAGE: EventType.MESSAGE_CREATED,
             Opcode.INCOMING_EDIT: EventType.MESSAGE_EDITED,
@@ -651,10 +711,8 @@ class UserMaxClient(BaseMaxClient):
         }
         event_type = opcode_to_event.get(opcode)
         if not event_type:
-            self.log.debug("Unhandled incoming opcode: %s", opcode)
+            self.log.warning("Unhandled incoming opcode: %s payload=%s", opcode, payload)
             return
-
-        self.log.debug("Incoming event opcode=%s payload=%s", opcode, payload)
 
         message = None
         raw_msg = payload.get("message", payload)

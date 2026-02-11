@@ -30,6 +30,55 @@ class MatrixHandler(BaseMatrixHandler):
         super().__init__(bridge=bridge)
         self.bridge = bridge
 
+    async def handle_event(self, evt: Event) -> None:
+        """Override to intercept m.reaction events before default dispatch."""
+        if evt.type == EventType.REACTION:
+            await self._handle_reaction(evt)
+            return
+        await super().handle_event(evt)
+
+    async def _handle_reaction(self, evt: Event) -> None:
+        """Handle an incoming Matrix reaction (m.reaction)."""
+        from .portal import Portal
+        from .user import User
+
+        if self.bridge.is_bridge_ghost(evt.sender):
+            return
+
+        portal = await Portal.get_by_mxid(evt.room_id)
+        if not portal:
+            return
+
+        sender = await User.get_by_mxid(evt.sender)
+        if not sender or not sender.is_logged_in:
+            return
+
+        # Extract reaction data from m.relates_to
+        content = evt.content
+        relates_to = None
+        if hasattr(content, "relates_to"):
+            relates_to = content.relates_to
+        elif isinstance(content, dict):
+            relates_to = content.get("m.relates_to")
+
+        if not relates_to:
+            return
+
+        # Get the target event ID and emoji key
+        if isinstance(relates_to, dict):
+            target_event_id = relates_to.get("event_id")
+            emoji = relates_to.get("key", "")
+        else:
+            target_event_id = getattr(relates_to, "event_id", None)
+            emoji = getattr(relates_to, "key", "")
+
+        if not target_event_id or not emoji:
+            return
+
+        await portal.handle_matrix_reaction(
+            sender, evt.event_id, emoji, EventID(target_event_id)
+        )
+
     async def handle_message(self, evt: MessageEvent, was_encrypted: bool = False) -> None:
         """Handle an incoming Matrix message."""
         from .portal import Portal
