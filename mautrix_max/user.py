@@ -235,6 +235,20 @@ class User:
                         if p_id and p_id != self.max_user_id:
                             contact = contacts_map.get(p_id, {})
                             c_name, c_avatar = self._extract_contact_info(contact)
+                            # Fallback: use chat title if contact name is missing
+                            chat_title = c.get("title") or ""
+                            if not c_name and chat_title and not chat_title.isdigit():
+                                c_name = chat_title
+                            # Last resort: try fetching from Max API
+                            if not c_name and self.max_client:
+                                try:
+                                    user_info = await self.max_client.get_user_info(p_id)
+                                    if user_info and user_info.name and not user_info.name.isdigit():
+                                        c_name = user_info.name
+                                        if user_info.avatar_url and not c_avatar:
+                                            c_avatar = user_info.avatar_url
+                                except Exception:
+                                    self.log.debug("Could not fetch user info for %d", p_id)
                             dwu = MaxUser(
                                 user_id=p_id,
                                 name=c_name,
