@@ -90,6 +90,10 @@ class BaseMaxClient(ABC):
         """Add a reaction to a message (User API only, no-op for Bot API)."""
 
     @abstractmethod
+    async def send_typing(self, chat_id: int) -> None:
+        """Send typing indicator (User API only, no-op for Bot API)."""
+
+    @abstractmethod
     async def mark_as_read(self, chat_id: int, message_id: str) -> None:
         """Mark a message as read (User API only, no-op for Bot API)."""
 

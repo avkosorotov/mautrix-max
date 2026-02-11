@@ -75,10 +75,13 @@ class Opcode:
     GET_CHATS = 48
     GET_CHAT = 49
     MARK_READ = 50
-    GET_CHAT_HISTORY = 53
+    GET_CHAT_HISTORY = 53       # Broken: crashes WS with code 257
+    CHAT_SUBSCRIBE = 75         # {chatId, subscribe: true} — subscribe to chat updates
+    GET_MESSAGE_STATS = 74      # {chatId, messageIds: [...]} → {stats: {}}
 
     # Messages
     SEND_MESSAGE = 64
+    SEND_TYPING = 65            # {chatId, type: "TEXT"} — typing indicator
     DELETE_MESSAGE = 66
     EDIT_MESSAGE = 67
 
@@ -87,20 +90,21 @@ class Opcode:
     GET_FILE = 88
 
     # Presence
-    GET_PRESENCE = 35
+    GET_PRESENCE = 35           # {contactIds: [...]} → {presence: {id: {seen, status}}}
 
     # Stickers
     SEND_STICKER = 56
 
     # Reactions
-    REACT = 178
+    REACT = 178                 # {chatId, messageId, reaction: {reactionType: "EMOJI", id: "..."}}
+    GET_MESSAGES_REACTIONS = 180  # {chatId, messageIds: [...]} → {messagesReactions: {msgId: {...}}}
 
     # Incoming events from server
     INCOMING_MESSAGE = 128
     INCOMING_EDIT = 129
-    INCOMING_READ_MARKER = 130  # {setAsUnread, chatId, userId, unread, mark}
-    INCOMING_DELETE = 131       # Real delete opcode (TBD — not yet confirmed)
-    INCOMING_PRESENCE = 132     # {presence: {seen, status}, userId}
+    INCOMING_READ_MARKER = 130  # {setAsUnread, chatId, userId, unread, mark} — NOT delete!
+    INCOMING_DELETE = 131       # TBD — not yet confirmed
+    INCOMING_PRESENCE = 132     # {presence: {seen, status}, userId} — status: 2=online, 3=recent
     INCOMING_REACTION = 156     # {chatId, messageId, reactionInfo: {counters, yourReaction, totalCount}}
 
     # 2FA
@@ -953,7 +957,13 @@ class UserMaxClient(BaseMaxClient):
         await self._send(Opcode.REACT, {
             "chatId": chat_id,
             "messageId": message_id,
-            "reaction": emoji,
+            "reaction": {"reactionType": "EMOJI", "id": emoji},
+        })
+
+    async def send_typing(self, chat_id: int) -> None:
+        await self._send(Opcode.SEND_TYPING, {
+            "chatId": chat_id,
+            "type": "TEXT",
         })
 
     async def mark_as_read(self, chat_id: int, message_id: str) -> None:

@@ -346,6 +346,10 @@ class BotMaxClient(BaseMaxClient):
         # Bot API doesn't support reactions -- silent no-op
         self.log.debug("add_reaction not supported in Bot API")
 
+    async def send_typing(self, chat_id: int) -> None:
+        # Bot API doesn't support typing indicators -- silent no-op
+        self.log.debug("send_typing not supported in Bot API")
+
     async def mark_as_read(self, chat_id: int, message_id: str) -> None:
         # Bot API doesn't support read markers -- silent no-op
         self.log.debug("mark_as_read not supported in Bot API")

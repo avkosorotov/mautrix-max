@@ -79,6 +79,25 @@ class MatrixHandler(BaseMatrixHandler):
             sender, evt.event_id, emoji, EventID(target_event_id)
         )
 
+    async def handle_typing(self, room_id: RoomID, typing: list[str]) -> None:
+        """Handle Matrix typing events — forward to Max."""
+        from .portal import Portal
+        from .user import User
+
+        portal = await Portal.get_by_mxid(room_id)
+        if not portal:
+            return
+
+        for user_id in typing:
+            if self.bridge.is_bridge_ghost(user_id):
+                continue
+            sender = await User.get_by_mxid(user_id)
+            if sender and sender.is_logged_in and sender.max_client:
+                try:
+                    await sender.max_client.send_typing(portal.max_chat_id)
+                except Exception:
+                    logger.debug("Failed to send typing to Max for %s", portal.max_chat_id)
+
     async def handle_message(self, evt: MessageEvent, was_encrypted: bool = False) -> None:
         """Handle an incoming Matrix message."""
         from .portal import Portal
