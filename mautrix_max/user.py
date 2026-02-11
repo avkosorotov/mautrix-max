@@ -124,16 +124,30 @@ class User:
             # Sync chats from login response (create portals + Matrix rooms)
             raw_chats = login_data.get("chats", []) if isinstance(login_data, dict) else login_data
             contacts = login_data.get("contacts", {}) if isinstance(login_data, dict) else {}
+            messages = login_data.get("messages", {}) if isinstance(login_data, dict) else {}
             if raw_chats:
-                asyncio.create_task(self._sync_chats(raw_chats, contacts))
+                asyncio.create_task(self._sync_chats(raw_chats, contacts, messages))
         except Exception:
             self.log.exception("Failed to connect to Max")
             self.max_client = None
 
-    async def _sync_chats(self, raw_chats: list[dict], contacts: dict | list = None) -> None:
+    @staticmethod
+    def _extract_contact_info(contact: dict) -> tuple[str, str | None]:
+        """Extract (name, avatar_url) from a contact dict."""
+        c_name = ""
+        names_list = contact.get("names", [])
+        if names_list and isinstance(names_list, list):
+            c_name = names_list[0].get("name", names_list[0].get("firstName", ""))
+        if not c_name:
+            c_name = contact.get("name", contact.get("firstName", ""))
+        c_avatar = contact.get("baseUrl", contact.get("avatarUrl", contact.get("avatar_url")))
+        return c_name, c_avatar
+
+    async def _sync_chats(self, raw_chats: list[dict], contacts: dict | list = None, messages: dict | list = None) -> None:
         """Create portals/rooms for chats returned by login response."""
-        from .max.types import ChatType, MaxChat, MaxUser
+        from .max.types import ChatType, MaxChat, MaxMessage, MaxUser
         from .portal import Portal
+        from .puppet import Puppet
 
         # Build contacts lookup: userId (int) → user data dict
         contacts_map: dict[int, dict] = {}
@@ -153,10 +167,37 @@ class User:
                         if uid:
                             contacts_map[int(uid)] = cdata
 
+        # Store contacts_map on the client for enriching sender info in messages
+        if self.max_client:
+            self.max_client._contacts_map = contacts_map
+
         self.log.info(
             "Syncing %d chats from login response (max_user_id=%s, contacts=%d)",
             len(raw_chats), self.max_user_id, len(contacts_map),
         )
+
+        # Phase 1: Bulk update puppets for ALL contacts (names + avatars)
+        puppet_updated = 0
+        for uid, cdata in contacts_map.items():
+            if uid == self.max_user_id:
+                continue  # Skip self
+            try:
+                c_name, c_avatar = self._extract_contact_info(cdata)
+                if c_name:  # Only update if we have a real name
+                    puppet = await Puppet.get_by_max_user_id(uid)
+                    if puppet:
+                        await puppet.update_info(MaxUser(
+                            user_id=uid,
+                            name=c_name,
+                            username=cdata.get("username"),
+                            avatar_url=c_avatar,
+                        ))
+                        puppet_updated += 1
+            except Exception:
+                self.log.debug("Failed to update puppet for contact %d", uid)
+        self.log.info("Updated %d puppets from contacts", puppet_updated)
+
+        # Phase 2: Sync chat portals
         created = 0
         for c in raw_chats:
             try:
@@ -192,17 +233,8 @@ class User:
                 if chat_type == ChatType.DIALOG and participant_ids and self.max_user_id:
                     for p_id in participant_ids:
                         if p_id and p_id != self.max_user_id:
-                            # Look up contact info from contacts_map
                             contact = contacts_map.get(p_id, {})
-                            # Extract name from nested "names" array
-                            c_name = ""
-                            names_list = contact.get("names", [])
-                            if names_list and isinstance(names_list, list):
-                                c_name = names_list[0].get("name", names_list[0].get("firstName", ""))
-                            if not c_name:
-                                c_name = contact.get("name", contact.get("firstName", ""))
-                            # Avatar URL from baseUrl
-                            c_avatar = contact.get("baseUrl", contact.get("avatarUrl", contact.get("avatar_url")))
+                            c_name, c_avatar = self._extract_contact_info(contact)
                             dwu = MaxUser(
                                 user_id=p_id,
                                 name=c_name,
@@ -227,7 +259,6 @@ class User:
                         old_name = portal.name
                         portal.name = chat.display_title
                         await portal._save()
-                        # Also update the Matrix room name
                         try:
                             intent = portal._get_main_intent()
                             await intent.set_room_name(portal.mxid, chat.display_title)
@@ -237,6 +268,126 @@ class User:
             except Exception:
                 self.log.exception("Failed to sync chat %s", c.get("chatId", "?"))
         self.log.info("Chat sync complete: %d new rooms created", created)
+
+        # Phase 3: Backfill last messages from login response
+        if messages:
+            await self._backfill_messages(messages, contacts_map)
+
+    async def _backfill_messages(self, messages: dict | list, contacts_map: dict[int, dict]) -> None:
+        """Backfill recent messages from login response into Matrix rooms."""
+        from .db.message import Message as DBMessage
+        from .max.types import MaxMessage, MaxUser
+        from .portal import Portal
+        from .puppet import Puppet
+
+        # Messages can be dict {chatId: [msgs]} or list of messages with chatId
+        msgs_by_chat: dict[int, list[dict]] = {}
+        if isinstance(messages, dict):
+            for chat_id_str, msg_list in messages.items():
+                try:
+                    cid = int(chat_id_str)
+                    if isinstance(msg_list, list):
+                        msgs_by_chat[cid] = msg_list
+                except (ValueError, TypeError):
+                    pass
+            if not msgs_by_chat:
+                # Maybe it's a flat dict with a different structure — log it
+                self.log.info("Messages field is dict with keys: %s (sample: %s)",
+                              list(messages.keys())[:5],
+                              str(messages)[:300] if len(str(messages)) < 500 else str(messages)[:300] + "...")
+                return
+        elif isinstance(messages, list):
+            for msg in messages:
+                if isinstance(msg, dict):
+                    cid = msg.get("chatId", msg.get("chat_id", 0))
+                    if cid:
+                        msgs_by_chat.setdefault(int(cid), []).append(msg)
+            if not msgs_by_chat and messages:
+                self.log.info("Messages field is list[%d], sample: %s",
+                              len(messages), str(messages[0])[:300] if messages else "empty")
+                return
+        else:
+            self.log.info("Messages field has unexpected type: %s", type(messages).__name__)
+            return
+
+        self.log.info("Backfilling messages for %d chats", len(msgs_by_chat))
+        backfilled = 0
+
+        for chat_id, msg_list in msgs_by_chat.items():
+            portal = await Portal.get_by_max_chat_id(chat_id, create=False)
+            if not portal or not portal.mxid:
+                continue
+
+            # Sort by timestamp, take last 10
+            sorted_msgs = sorted(msg_list, key=lambda m: m.get("timestamp", m.get("time", 0)))
+            for raw_msg in sorted_msgs[-10:]:
+                try:
+                    mid = str(raw_msg.get("mid", raw_msg.get("id", raw_msg.get("messageId", ""))))
+                    if not mid:
+                        continue
+
+                    # Skip if already bridged
+                    existing = await DBMessage.get_by_max_msg_id(chat_id, mid)
+                    if existing:
+                        continue
+
+                    # Build sender info
+                    raw_sender = raw_msg.get("sender", raw_msg.get("from"))
+                    sender_id = None
+                    if isinstance(raw_sender, int):
+                        sender_id = raw_sender
+                    elif isinstance(raw_sender, dict):
+                        sender_id = raw_sender.get("userId", raw_sender.get("user_id", 0))
+
+                    if sender_id == self.max_user_id:
+                        continue  # Skip own messages in backfill to avoid duplicates
+
+                    # Get puppet for sender
+                    puppet = None
+                    if sender_id:
+                        puppet = await Puppet.get_by_max_user_id(sender_id)
+                        # Enrich from contacts if available
+                        if puppet and sender_id in contacts_map:
+                            c_name, c_avatar = self._extract_contact_info(contacts_map[sender_id])
+                            if c_name:
+                                await puppet.update_info(MaxUser(
+                                    user_id=sender_id, name=c_name, avatar_url=c_avatar,
+                                ))
+
+                    intent = puppet.intent if puppet else portal._get_main_intent()
+
+                    # Build body
+                    raw_body = raw_msg.get("body")
+                    text = ""
+                    if isinstance(raw_body, dict):
+                        text = raw_body.get("text", "")
+                    elif isinstance(raw_body, str):
+                        text = raw_body
+                    else:
+                        text = raw_msg.get("text", "")
+
+                    if not text:
+                        continue  # Skip media-only messages in backfill for now
+
+                    from mautrix.types import MessageType, TextMessageEventContent
+                    content = TextMessageEventContent(
+                        msgtype=MessageType.TEXT,
+                        body=text,
+                    )
+                    event_id = await intent.send_message(portal.mxid, content)
+
+                    await DBMessage.insert(
+                        max_chat_id=chat_id,
+                        max_msg_id=mid,
+                        mxid=str(event_id),
+                        mx_room=str(portal.mxid),
+                    )
+                    backfilled += 1
+                except Exception:
+                    self.log.debug("Failed to backfill message %s in chat %d",
+                                   raw_msg.get("mid", "?"), chat_id)
+
+        self.log.info("Backfill complete: %d messages bridged", backfilled)
 
     async def disconnect(self) -> None:
         """Disconnect from Max."""

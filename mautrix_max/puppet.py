@@ -118,22 +118,30 @@ class Puppet:
     async def update_info(self, info: MaxUser) -> None:
         """Update puppet display name and avatar from Max user info."""
         changed = False
-        if info.name and info.name != self.name:
-            self.name = info.name
+
+        # Accept new name if it's a real name (not just a numeric ID)
+        new_name = info.name or ""
+        is_real_name = new_name and not new_name.isdigit()
+        current_is_numeric = not self.name or self.name.isdigit()
+
+        if is_real_name and new_name != self.name:
+            self.name = new_name
             changed = True
         if info.username and info.username != self.username:
             self.username = info.username
             changed = True
 
-        if changed or not self.name_set:
+        # Update displayname if: name changed, OR name_set with numeric ID and now we have real name
+        need_displayname_update = changed or not self.name_set or (self.name_set and current_is_numeric and is_real_name)
+        if need_displayname_update:
             try:
                 await self.intent.set_displayname(self.displayname)
-                if not self.name_set:
-                    self.name_set = True
-                    changed = True
+                self.name_set = True
+                changed = True
             except Exception:
                 self.log.exception("Failed to set displayname")
 
+        # Download and set avatar (retry if not set yet)
         if info.avatar_url and not self.avatar_set:
             try:
                 async with aiohttp.ClientSession() as sess:
@@ -148,7 +156,7 @@ class Puppet:
                             changed = True
                             self.log.info("Set avatar from %s -> %s", info.avatar_url, mxc)
             except Exception:
-                self.log.exception("Failed to set avatar")
+                self.log.exception("Failed to set avatar from %s", info.avatar_url)
 
         if changed:
             await self.save()

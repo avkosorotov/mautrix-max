@@ -321,16 +321,18 @@ class UserMaxClient(BaseMaxClient):
             )
         else:
             self.log.info("Token login succeeded (no profile in response)")
-        # Extract chats and contacts from login response
+        # Extract chats, contacts, and messages from login response
         raw_chats = resp.get("chats", resp.get("dialogs", []))
         contacts = resp.get("contacts", {})
+        messages = resp.get("messages", {})
         if raw_chats:
             self.log.info(
-                "Login response contains %d chats, %d contacts",
+                "Login response contains %d chats, %d contacts, messages=%s",
                 len(raw_chats),
                 len(contacts) if isinstance(contacts, (dict, list)) else 0,
+                type(messages).__name__ + (f"({len(messages)})" if isinstance(messages, (dict, list)) else ""),
             )
-        return {"chats": raw_chats, "contacts": contacts}
+        return {"chats": raw_chats, "contacts": contacts, "messages": messages}
 
     async def _close_ws(self) -> None:
         """Close WebSocket and cancel listener (used on auth failure cleanup)."""
@@ -661,8 +663,19 @@ class UserMaxClient(BaseMaxClient):
             raw_sender = raw_msg.get("sender", raw_msg.get("from"))
             if raw_sender is not None:
                 if isinstance(raw_sender, int):
-                    # User API sends sender as plain int (user_id)
-                    sender = MaxUser(user_id=raw_sender, name=str(raw_sender))
+                    # User API sends sender as plain int (user_id) — enrich from contacts cache
+                    sender_name = str(raw_sender)
+                    sender_avatar = None
+                    contacts_map = getattr(self, "_contacts_map", {})
+                    if contacts_map and raw_sender in contacts_map:
+                        cdata = contacts_map[raw_sender]
+                        names_list = cdata.get("names", [])
+                        if names_list and isinstance(names_list, list):
+                            sender_name = names_list[0].get("name", names_list[0].get("firstName", "")) or sender_name
+                        if not sender_name or sender_name == str(raw_sender):
+                            sender_name = cdata.get("name", cdata.get("firstName", sender_name))
+                        sender_avatar = cdata.get("baseUrl", cdata.get("avatarUrl"))
+                    sender = MaxUser(user_id=raw_sender, name=sender_name, avatar_url=sender_avatar)
                 elif isinstance(raw_sender, dict):
                     sender = MaxUser(
                         user_id=raw_sender.get("userId", raw_sender.get("user_id", 0)),
