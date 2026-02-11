@@ -124,9 +124,8 @@ class User:
             # Sync chats from login response (create portals + Matrix rooms)
             raw_chats = login_data.get("chats", []) if isinstance(login_data, dict) else login_data
             contacts = login_data.get("contacts", {}) if isinstance(login_data, dict) else {}
-            messages = login_data.get("messages", {}) if isinstance(login_data, dict) else {}
             if raw_chats:
-                asyncio.create_task(self._sync_chats(raw_chats, contacts, messages))
+                asyncio.create_task(self._sync_chats(raw_chats, contacts))
         except Exception:
             self.log.exception("Failed to connect to Max")
             self.max_client = None
@@ -143,7 +142,7 @@ class User:
         c_avatar = contact.get("baseUrl", contact.get("avatarUrl", contact.get("avatar_url")))
         return c_name, c_avatar
 
-    async def _sync_chats(self, raw_chats: list[dict], contacts: dict | list = None, messages: dict | list = None) -> None:
+    async def _sync_chats(self, raw_chats: list[dict], contacts: dict | list = None) -> None:
         """Create portals/rooms for chats returned by login response."""
         from .max.types import ChatType, MaxChat, MaxMessage, MaxUser
         from .portal import Portal
@@ -283,11 +282,10 @@ class User:
                 self.log.exception("Failed to sync chat %s", c.get("chatId", "?"))
         self.log.info("Chat sync complete: %d new rooms created", created)
 
-        # Phase 3: Backfill last messages from login response
-        if messages:
-            await self._backfill_messages(messages, contacts_map)
+        # Phase 3: Backfill last messages via get_chat_history API
+        await self._backfill_messages(contacts_map)
 
-    async def _backfill_messages(self, messages: dict | list, contacts_map: dict[int, dict]) -> None:
+    async def _backfill_messages(self, contacts_map: dict[int, dict]) -> None:
         """Backfill recent messages from Max into Matrix rooms via get_chat_history."""
         from .db.message import Message as DBMessage
         from .max.types import MaxUser
@@ -313,7 +311,7 @@ class User:
                 continue
 
             try:
-                raw_msgs = await self.max_client.get_chat_history(db_portal.max_chat_id, count=5)
+                raw_msgs = await self.max_client.get_chat_history(db_portal.max_chat_id, count=20)
             except Exception:
                 self.log.debug("Failed to get history for chat %d", db_portal.max_chat_id)
                 continue
