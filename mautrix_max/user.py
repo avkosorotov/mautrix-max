@@ -282,8 +282,10 @@ class User:
                 self.log.exception("Failed to sync chat %s", c.get("chatId", "?"))
         self.log.info("Chat sync complete: %d new rooms created", created)
 
-        # Phase 3: Backfill last messages via get_chat_history API
-        await self._backfill_messages(contacts_map)
+        # Phase 3: Backfill last messages via get_chat_history API (once only)
+        if not getattr(self, '_backfill_done', False):
+            self._backfill_done = True
+            await self._backfill_messages(contacts_map)
 
     async def _backfill_messages(self, contacts_map: dict[int, dict]) -> None:
         """Backfill recent messages from Max into Matrix rooms via get_chat_history."""
@@ -303,6 +305,7 @@ class User:
 
         self.log.info("Backfilling messages for %d portals", len(all_portals))
         backfilled = 0
+        failures = 0
 
         for db_portal in all_portals:
             # Skip if we already have messages in this room
@@ -310,10 +313,21 @@ class User:
             if existing_count > 0:
                 continue
 
+            # Rate limit: wait between API calls to avoid WS disconnect
+            await asyncio.sleep(2)
+
+            if not self.max_client or not await self.max_client.is_connected():
+                self.log.warning("WS disconnected during backfill, stopping")
+                break
+
             try:
                 raw_msgs = await self.max_client.get_chat_history(db_portal.max_chat_id, count=20)
             except Exception:
+                failures += 1
                 self.log.debug("Failed to get history for chat %d", db_portal.max_chat_id)
+                if failures >= 3:
+                    self.log.warning("Too many backfill failures, stopping")
+                    break
                 continue
 
             if not raw_msgs:
