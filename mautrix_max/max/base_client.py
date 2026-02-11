@@ -81,6 +81,10 @@ class BaseMaxClient(ABC):
     ) -> str:
         """Upload media and return the attachment token/URL."""
 
+    async def get_chat_history(self, chat_id: int, count: int = 10) -> list[dict]:
+        """Get recent messages from a chat. Returns raw message dicts."""
+        return []
+
     @abstractmethod
     async def add_reaction(self, chat_id: int, message_id: str, emoji: str) -> None:
         """Add a reaction to a message (User API only, no-op for Bot API)."""

@@ -816,6 +816,16 @@ class UserMaxClient(BaseMaxClient):
             offset += len(raw_chats)
         return all_chats
 
+    async def get_chat_history(self, chat_id: int, count: int = 10) -> list[dict]:
+        """Fetch recent messages from a chat (opcode 53)."""
+        resp = await self._send_and_wait(Opcode.GET_CHAT_HISTORY, {
+            "chatId": chat_id,
+            "count": count,
+        })
+        messages = resp.get("messages", []) if resp else []
+        self.log.debug("get_chat_history(%d): %d messages", chat_id, len(messages))
+        return messages
+
     # -- Chat info -----------------------------------------------------------
 
     async def get_chat(self, chat_id: int) -> MaxChat:

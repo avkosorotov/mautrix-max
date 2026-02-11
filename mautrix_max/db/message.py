@@ -72,6 +72,13 @@ class Message:
         return cls(max_chat_id, max_msg_id, mxid, mx_room, timestamp)
 
     @classmethod
+    async def count_by_chat(cls, chat_id: int) -> int:
+        row = await cls.db.fetchrow(
+            "SELECT COUNT(*) AS cnt FROM message WHERE max_chat_id=$1", chat_id
+        )
+        return row["cnt"] if row else 0
+
+    @classmethod
     async def delete_by_max_msg_id(cls, chat_id: int, msg_id: str) -> None:
         await cls.db.execute(
             "DELETE FROM message WHERE max_chat_id=$1 AND max_msg_id=$2",

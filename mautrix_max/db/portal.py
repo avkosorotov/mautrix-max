@@ -83,6 +83,13 @@ class Portal:
             self.max_chat_id, self.mxid, self.name, self.encrypted, self.relay_user_id,
         )
 
+    @classmethod
+    async def get_all_with_mxid(cls) -> list[Portal]:
+        rows = await cls.db.fetch(
+            "SELECT * FROM portal WHERE mxid IS NOT NULL"
+        )
+        return [cls._from_row(row) for row in rows]
+
     async def delete(self) -> None:
         await self.db.execute(
             "DELETE FROM portal WHERE max_chat_id=$1", self.max_chat_id

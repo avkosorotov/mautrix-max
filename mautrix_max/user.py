@@ -274,60 +274,53 @@ class User:
             await self._backfill_messages(messages, contacts_map)
 
     async def _backfill_messages(self, messages: dict | list, contacts_map: dict[int, dict]) -> None:
-        """Backfill recent messages from login response into Matrix rooms."""
+        """Backfill recent messages from Max into Matrix rooms via get_chat_history."""
         from .db.message import Message as DBMessage
-        from .max.types import MaxMessage, MaxUser
+        from .max.types import MaxUser
         from .portal import Portal
         from .puppet import Puppet
 
-        # Messages can be dict {chatId: [msgs]} or list of messages with chatId
-        msgs_by_chat: dict[int, list[dict]] = {}
-        if isinstance(messages, dict):
-            for chat_id_str, msg_list in messages.items():
-                try:
-                    cid = int(chat_id_str)
-                    if isinstance(msg_list, list):
-                        msgs_by_chat[cid] = msg_list
-                except (ValueError, TypeError):
-                    pass
-            if not msgs_by_chat:
-                # Maybe it's a flat dict with a different structure — log it
-                self.log.info("Messages field is dict with keys: %s (sample: %s)",
-                              list(messages.keys())[:5],
-                              str(messages)[:300] if len(str(messages)) < 500 else str(messages)[:300] + "...")
-                return
-        elif isinstance(messages, list):
-            for msg in messages:
-                if isinstance(msg, dict):
-                    cid = msg.get("chatId", msg.get("chat_id", 0))
-                    if cid:
-                        msgs_by_chat.setdefault(int(cid), []).append(msg)
-            if not msgs_by_chat and messages:
-                self.log.info("Messages field is list[%d], sample: %s",
-                              len(messages), str(messages[0])[:300] if messages else "empty")
-                return
-        else:
-            self.log.info("Messages field has unexpected type: %s", type(messages).__name__)
+        if not self.max_client:
             return
 
-        self.log.info("Backfilling messages for %d chats", len(msgs_by_chat))
+        # Get all portals with existing Matrix rooms
+        from .db.portal import Portal as DBPortal
+        all_portals = await DBPortal.get_all_with_mxid()
+        if not all_portals:
+            return
+
+        self.log.info("Backfilling messages for %d portals", len(all_portals))
         backfilled = 0
 
-        for chat_id, msg_list in msgs_by_chat.items():
-            portal = await Portal.get_by_max_chat_id(chat_id, create=False)
+        for db_portal in all_portals:
+            # Skip if we already have messages in this room
+            existing_count = await DBMessage.count_by_chat(db_portal.max_chat_id)
+            if existing_count > 0:
+                continue
+
+            try:
+                raw_msgs = await self.max_client.get_chat_history(db_portal.max_chat_id, count=5)
+            except Exception:
+                self.log.debug("Failed to get history for chat %d", db_portal.max_chat_id)
+                continue
+
+            if not raw_msgs:
+                continue
+
+            portal = await Portal.get_by_max_chat_id(db_portal.max_chat_id, create=False)
             if not portal or not portal.mxid:
                 continue
 
-            # Sort by timestamp, take last 10
-            sorted_msgs = sorted(msg_list, key=lambda m: m.get("timestamp", m.get("time", 0)))
-            for raw_msg in sorted_msgs[-10:]:
+            # Sort oldest first so messages appear in chronological order
+            sorted_msgs = sorted(raw_msgs, key=lambda m: m.get("timestamp", m.get("time", 0)))
+
+            for raw_msg in sorted_msgs:
                 try:
                     mid = str(raw_msg.get("mid", raw_msg.get("id", raw_msg.get("messageId", ""))))
                     if not mid:
                         continue
 
-                    # Skip if already bridged
-                    existing = await DBMessage.get_by_max_msg_id(chat_id, mid)
+                    existing = await DBMessage.get_by_max_msg_id(db_portal.max_chat_id, mid)
                     if existing:
                         continue
 
@@ -339,14 +332,10 @@ class User:
                     elif isinstance(raw_sender, dict):
                         sender_id = raw_sender.get("userId", raw_sender.get("user_id", 0))
 
-                    if sender_id == self.max_user_id:
-                        continue  # Skip own messages in backfill to avoid duplicates
-
                     # Get puppet for sender
                     puppet = None
-                    if sender_id:
+                    if sender_id and sender_id != self.max_user_id:
                         puppet = await Puppet.get_by_max_user_id(sender_id)
-                        # Enrich from contacts if available
                         if puppet and sender_id in contacts_map:
                             c_name, c_avatar = self._extract_contact_info(contacts_map[sender_id])
                             if c_name:
@@ -377,15 +366,14 @@ class User:
                     event_id = await intent.send_message(portal.mxid, content)
 
                     await DBMessage.insert(
-                        max_chat_id=chat_id,
+                        max_chat_id=db_portal.max_chat_id,
                         max_msg_id=mid,
                         mxid=str(event_id),
                         mx_room=str(portal.mxid),
                     )
                     backfilled += 1
                 except Exception:
-                    self.log.debug("Failed to backfill message %s in chat %d",
-                                   raw_msg.get("mid", "?"), chat_id)
+                    self.log.debug("Failed to backfill message in chat %d", db_portal.max_chat_id)
 
         self.log.info("Backfill complete: %d messages bridged", backfilled)
 
