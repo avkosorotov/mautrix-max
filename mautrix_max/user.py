@@ -282,10 +282,9 @@ class User:
                 self.log.exception("Failed to sync chat %s", c.get("chatId", "?"))
         self.log.info("Chat sync complete: %d new rooms created", created)
 
-        # Phase 3: Backfill last messages via get_chat_history API (once only)
-        if not getattr(self, '_backfill_done', False):
-            self._backfill_done = True
-            await self._backfill_messages(contacts_map)
+        # Phase 3: Backfill disabled — Max WS API closes connection on opcode 53
+        # (GET_CHAT_HISTORY). New messages will be bridged in real-time.
+        # TODO: investigate REST API or alternative approach for history backfill
 
     async def _backfill_messages(self, contacts_map: dict[int, dict]) -> None:
         """Backfill recent messages from Max into Matrix rooms via get_chat_history."""
