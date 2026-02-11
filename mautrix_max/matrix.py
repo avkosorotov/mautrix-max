@@ -79,6 +79,39 @@ class MatrixHandler(BaseMatrixHandler):
             sender, evt.event_id, emoji, EventID(target_event_id)
         )
 
+    async def handle_receipt(self, evt: Event) -> None:
+        """Handle Matrix read receipts — forward to Max."""
+        from .portal import Portal
+        from .user import User
+
+        portal = await Portal.get_by_mxid(evt.room_id)
+        if not portal:
+            return
+
+        # Receipt content: {event_id: {"m.read": {user_id: {ts: N}}}}
+        content = evt.content
+        if isinstance(content, dict):
+            receipt_data = content
+        elif hasattr(content, "serialize"):
+            receipt_data = content.serialize()
+        else:
+            receipt_data = {}
+
+        for event_id_str, receipt_types in receipt_data.items():
+            if not isinstance(receipt_types, dict):
+                continue
+            read_users = receipt_types.get("m.read", {})
+            if not isinstance(read_users, dict):
+                continue
+            for user_id in read_users:
+                if self.bridge.is_bridge_ghost(user_id):
+                    continue
+                sender = await User.get_by_mxid(user_id)
+                if sender and sender.is_logged_in and sender.max_client:
+                    await portal.handle_matrix_read_receipt(
+                        sender, EventID(event_id_str)
+                    )
+
     async def handle_typing(self, room_id: RoomID, typing: list[str]) -> None:
         """Handle Matrix typing events — forward to Max."""
         from .portal import Portal

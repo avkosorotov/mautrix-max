@@ -517,6 +517,25 @@ class Portal:
 
     # ── Read receipts & typing ───────────────────────────────────
 
+    async def handle_matrix_read_receipt(self, sender: User, event_id: EventID) -> None:
+        """Handle a Matrix read receipt and forward to Max."""
+        if not sender.max_client:
+            return
+
+        from .db.message import Message as DBMessage
+
+        db_msg = await DBMessage.get_by_mxid(str(event_id))
+        if not db_msg:
+            return
+
+        try:
+            await sender.max_client.mark_as_read(
+                db_msg.max_chat_id, db_msg.max_msg_id
+            )
+            self.log.debug("Forwarded read receipt to Max for msg %s", db_msg.max_msg_id)
+        except Exception:
+            self.log.debug("Failed to send read receipt to Max")
+
     async def handle_max_read_receipt(self, sender_id: int, message_id: str) -> None:
         """Handle an incoming read receipt from Max and relay to Matrix."""
         if not self.mxid or not message_id:
